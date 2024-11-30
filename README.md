@@ -3,7 +3,6 @@ The code is applied in my Master thesis "Nowcasting trade areas using machine le
 
 # Machine learning methods
 The following methods are used:
-Where appropriate, please also cite
 
 - Macroeconomic random forest as: Goulet-Coulombe, P. (2020). “The Macroeconomy as a Random Forest”, arXiv pre-print
 - Linear gradient boosting as: Chen, T., and Guestrin, C. (2016). “XGBoost: A Scalable Tree Boosting System”, in Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, pp. 785–794
