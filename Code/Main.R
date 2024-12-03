@@ -1,5 +1,6 @@
 # Load packages
 library(data.table)
+library(forecast)
 library(purrr)
 library(tidyverse)
 library(readr)
@@ -34,15 +35,22 @@ library(stargazer)
 library(dplyr)
 library(scales)
 library(data.table)
-
+library(stats)
 
 rm(list = ls())
 # Function to check stationarity using the Augmented Dickey-Fuller (ADF) test
 is_stationary <- function(series, significance_level = 0.05) {
-  # Ensure no NA values are present
-  series <- na.omit(series)
+  series <- na.omit(series)  # Remove NA values for the test
   adf_test <- adf.test(series)
-  return(adf_test$p.value <= significance_level)  # Check if p-value <= significance level
+  return(adf_test$p.value <= significance_level)  # Stationary if p-value <= significance level
+}
+
+# Function to check for seasonality (using ACF)
+has_seasonality <- function(series, seasonal_lag = 12, acf_threshold = 0.2) {
+  series <- na.omit(series)  # Remove NA values for ACF calculation
+  acf_values <- acf(series, plot = FALSE)  # Compute ACF
+  significant_lags <- which(abs(acf_values$acf) > acf_threshold)  # Significant lags
+  return(seasonal_lag %in% significant_lags)  # Check if seasonal lag is significant
 }
 # Function to standardise a column
 standardise <- function(series) {
@@ -50,34 +58,44 @@ standardise <- function(series) {
 }
 
 # Load the Excel sheet
-data <- read_excel("EU DATA.xlsx")
-
-# Data transformation: check stationarity and apply transformations
+data <- read_excel("Data/EU DATA.xlsx")
+# Data transformation: handle seasonality, stationarity, and standardisation
 transformed_data <- data %>%
   mutate(across(where(is.numeric), ~ {
-    if (!is_stationary(.)) {
-      print(paste(cur_column(), "is non-stationary. Applying differencing and standardising."))
-      return(standardise(c(NA, diff(.))))  # Differencing and standardising
-    } else {
-      print(paste(cur_column(), "is stationary. Standardising directly."))
-      return(standardise(.))  # Standardising directly
+    series <- .  # Current column data
+    
+    # Check for seasonality
+    if (has_seasonality(series)) {
+      print(paste(cur_column(), "has seasonality. Applying seasonal differencing."))
+      series <- c(rep(NA, 12), diff(series, lag = 12))  # Apply seasonal differencing
     }
+    
+    # Check for stationarity after handling seasonality
+    if (!is_stationary(series)) {
+      print(paste(cur_column(), "is non-stationary after seasonal adjustment. Applying differencing."))
+      series <- c(NA, diff(series))  # Apply regular differencing
+    }
+    
+    # Standardise the series
+    print(paste(cur_column(), "is now stationary. Standardising."))
+    return(standardise(series))
   }))
+
 # Save the transformed data to a new Excel file
-output_file <- "transformed_data.xlsx"  # Replace with your desired output file name
+output_file <- "Data/transformed_data_EU.xlsx"  # Replace with your desired output file name
 write_xlsx(transformed_data, output_file)
 
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
-name_input <- "transformed_data.xlsx"  # Name of the input file
-min_start_date <- "2001-01-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2024-07-15"          # Start date for OOS predictions
+name_input <- "Data/transformed_data_EU.xlsx"  # Name of the input file
+min_start_date <- "2015-11-15"          # Minimum start date for variables (otherwise discarded)
+start_date_oos <- "2024-06-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
 
 list_h <- c(-1, 0, 1)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
-list_methods <- c( 3, 4)                  # List of pre-selection methods
+list_methods <- c(1,2, 3, 4)                  # List of pre-selection methods
 # 0 = No pre-selection
 # 1 = LARS (Efron et al., 2004)
 # 2 = Correlation-based (SIS: Fan and Lv, 2008)
@@ -308,14 +326,14 @@ for (hh in 1:length(list_h)){
       dir.create(file.path(paste0("",horizon)), showWarnings = FALSE)
       
       # Write results (predictions)
-      write.csv(select(results,-year), file = paste0("",
+      write.csv(select(results,-year), file = paste0("./2-Output/",
                                                      paste0("h",horizon,"/"),
                                                      "pred_sel_",
                                                      select_method,
                                                      "_n_",
                                                      n_var,
                                                      "_reg_",
-                                                     paste(list_reg, collapse='_'),
+                                                     #paste(list_reg, collapse='_'),
                                                      "_h_",
                                                      horizon,
                                                      "_",
@@ -350,7 +368,7 @@ for (hh in 1:length(list_h)){
       
       # Writing results
       # Results are written for RMSE on crisis sample (2008-2009 and 2020-2021) and non-crisis sample
-      write.csv(summary_all, file = paste0("",
+      write.csv(summary_all, file = paste0("./2-Output/",
                                            paste0("h",horizon,"/"),
                                            "rmse_sel_",
                                            select_method,
@@ -381,7 +399,7 @@ for (hh in 1:length(list_h)){
   # This is a summary of all the tested methods
   summary_ps_meth[1,1] <- "pre-selection"
   summary_ps_meth[2,1] <- "nb variables"
-  write.csv(summary_ps_meth, file = paste0("",
+  write.csv(summary_ps_meth, file = paste0("./2-Output/",
                                            paste0("h",horizon,"/"),
                                            "summaryALL_sel_",
                                            paste(list_methods,collapse='_'),
