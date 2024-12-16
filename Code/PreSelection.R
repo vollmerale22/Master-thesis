@@ -39,13 +39,14 @@ pre_select <- function(data_real,ii,horizon,select_method,n_var){
       distinct() %>%
       t() %>%
       as.data.frame() %>%
-      rename(corr=V1)
+      rename(corr=V1) %>%
+      mutate(variable = rownames(.))
+    rownames(order) <- NULL # Reset row names to avoid conflicts
     
     out_sel <- order %>%
       mutate(corr = abs(corr)) %>%
       arrange(desc(corr)) %>%
-      head(n_var) %>%
-      mutate(variable=as.character(variable))
+      head(n_var)
     
     var_sel <- out_sel$variable
     
