@@ -90,12 +90,12 @@ write_xlsx(transformed_data, output_file)
 # ----------------------------------------------------------------------------
 name_input <- "Data/transformed_data_EU.xlsx"  # Name of the input file
 min_start_date <- "2015-11-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2024-06-15"          # Start date for OOS predictions
+start_date_oos <- "2024-01-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
 
-list_h <- c(-1, 0, 1)                      # List of horizons for back-, now- or fore-cast takes place
+list_h <- c(0)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
-list_methods <- c(1,2, 3, 4)                  # List of pre-selection methods
+list_methods <- c(2)                  # List of pre-selection methods
 # 0 = No pre-selection
 # 1 = LARS (Efron et al., 2004)
 # 2 = Correlation-based (SIS: Fan and Lv, 2008)
@@ -266,7 +266,7 @@ for (hh in 1:length(list_h)){
           don_cb <- cbind(lhs_sel, rhs_fct_sel)
           
           # Cleaning
-          rm(eig_val)
+          #rm(eig_val)
           rm(res_pca)
           rm(rhs_fct)
           rm(rhs_fct_sel)
@@ -326,7 +326,12 @@ for (hh in 1:length(list_h)){
       dir.create(file.path(paste0("",horizon)), showWarnings = FALSE)
       
       # Write results (predictions)
-      write.csv(select(results,-year), file = paste0("./2-Output/",
+      write.csv(select(results,-year), file = {output_dir <- paste0("./2-Output/",
+                                                                    paste0("h", horizon, "/"))
+      if (!dir.exists(output_dir)) {
+        dir.create(output_dir, recursive = TRUE)
+      }
+        paste0("./2-Output/",
                                                      paste0("h",horizon,"/"),
                                                      "pred_sel_",
                                                      select_method,
@@ -340,7 +345,7 @@ for (hh in 1:length(list_h)){
                                                      start_date_oos,
                                                      "_",
                                                      end_date_oos,
-                                                     ".csv"),
+                                                     ".csv")},
                 row.names=FALSE)
       
       # Summarizing and writing aggregate results
