@@ -25,7 +25,7 @@ doClean <- function(data_init,min_start_date){
   var_to_keep <- c(unique(ctrl_min$variable),"date")
   
   data_rmv %<>%
-    select(all_of(var_to_keep))
+    dplyr::select(all_of(var_to_keep))
   
   
   # -----------------------------------
@@ -38,8 +38,7 @@ doClean <- function(data_init,min_start_date){
   
   # Remove non-stationary variables - by ADF test, removing if p-value > 10%
   temp <- data_rmv %>%
-    select(-date,
-           -target)
+    dplyr::select(-date,-target)
   var_nonstat <- c()
   
   for (jj in 1:ncol(temp)){
@@ -57,7 +56,7 @@ doClean <- function(data_init,min_start_date){
   }
   
   data_rmv %<>%
-    select(-all_of(var_nonstat))
+    dplyr::select(-all_of(var_nonstat))
   
   
   # -----------------------------------

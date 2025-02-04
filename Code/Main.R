@@ -1,5 +1,6 @@
 # Load packages
 library(data.table)
+library(tseries)
 library(forecast)
 library(purrr)
 library(tidyverse)
@@ -36,72 +37,80 @@ library(dplyr)
 library(scales)
 library(data.table)
 library(stats)
+library(seasonal)
+library(lubridate)
+library(future.apply)
 
 rm(list = ls())
-# Function to check stationarity using the Augmented Dickey-Fuller (ADF) test
-is_stationary <- function(series, significance_level = 0.05) {
-  series <- na.omit(series)  # Remove NA values for the test
-  adf_test <- adf.test(series)
-  return(adf_test$p.value <= significance_level)  # Stationary if p-value <= significance level
+# Function to check if a time series is stationary
+is_stationary <- function(series) {
+  clean_series <- na.omit(series)  # Remove NAs
+  
+  if (length(clean_series) < 5 || length(unique(clean_series)) == 1) {
+    return(TRUE)  # Assume stationary if not enough data or constant
+  }
+  
+  test_result <- tryCatch({
+    suppressWarnings(adf.test(clean_series, k = 0))  # Remove ADF test warnings
+  }, error = function(e) {
+    warning("Stationarity test failed:", e$message)
+    return(list(p.value = 1))  # Assume non-stationary if test fails
+  })
+  
+  return(test_result$p.value < 0.05)  # Stationary if p-value < 0.05
 }
 
-# Function to check for seasonality (using ACF)
-has_seasonality <- function(series, seasonal_lag = 12, acf_threshold = 0.2) {
-  series <- na.omit(series)  # Remove NA values for ACF calculation
-  acf_values <- acf(series, plot = FALSE)  # Compute ACF
-  significant_lags <- which(abs(acf_values$acf) > acf_threshold)  # Significant lags
-  return(seasonal_lag %in% significant_lags)  # Check if seasonal lag is significant
-}
 # Function to standardise a column
 standardise <- function(series) {
   return((series - mean(series, na.rm = TRUE)) / sd(series, na.rm = TRUE))
 }
 
 # Load the Excel sheet
-data <- read_excel("Data/EU DATA.xlsx")
-# Data transformation: handle seasonality, stationarity, and standardisation
+data <- read_excel("Data/Data combined.xlsx")
+
+# Load functions
+source("Code/Clean.R")         
+source("Code/Align.R")        
+source("Code/PreSelection.R")  
+source("Code/Regression.R")    
+source("COde/Tuning.R")        
+source("Code/Seasonality.R") 
+
+# ----------------------------------------------------------------------------
+# Adjust seasonality and standardise data 
 transformed_data <- data %>%
+  adjust_seasonality_large()  # Apply seasonal adjustment
+  
+final_transformed_data <- transformed_data %>%
   mutate(across(where(is.numeric), ~ {
-    series <- .  # Current column data
-    
-    # Check for seasonality
-    if (has_seasonality(series)) {
-      print(paste(cur_column(), "has seasonality. Applying seasonal differencing."))
-      series <- c(rep(NA, 12), diff(series, lag = 12))  # Apply seasonal differencing
-    }
-    
-    # Check for stationarity after handling seasonality
-    if (!is_stationary(series)) {
-      print(paste(cur_column(), "is non-stationary after seasonal adjustment. Applying differencing."))
-      series <- c(NA, diff(series))  # Apply regular differencing
-    }
-    
-    # Standardise the series
-    print(paste(cur_column(), "is now stationary. Standardising."))
-    return(standardise(series))
-  }))
+  series <- .
+  # Check for stationarity
+  if (!is_stationary(series)) {
+    series <- c(NA, diff(series))  # Apply regular differencing
+  }
+  return(standardise(series))
+}))
 
 # Save the transformed data to a new Excel file
-output_file <- "Data/transformed_data_EU.xlsx"  # Replace with your desired output file name
-write_xlsx(transformed_data, output_file)
+output_file <- "Data/transformed_data_test.xlsx"  # Replace with your desired output file name
+write_xlsx(final_transformed_data, output_file)
 
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
-name_input <- "Data/transformed_data_EU.xlsx"  # Name of the input file
-min_start_date <- "2015-11-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2024-01-15"          # Start date for OOS predictions
+name_input <- output_file  # Name of the input file
+min_start_date <- "2008-01-15"          # Minimum start date for variables (otherwise discarded)
+start_date_oos <- "2017-01-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
-
-list_h <- c(0)                      # List of horizons for back-, now- or fore-cast takes place
+list_h <- c(0,1)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
-list_methods <- c(2)                  # List of pre-selection methods
+list_methods <- c(1)                  # List of pre-selection methods
 # 0 = No pre-selection
 # 1 = LARS (Efron et al., 2004)
 # 2 = Correlation-based (SIS: Fan and Lv, 2008)
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
-list_n <- c(40,60)                      # List of number of variables kept after pre-selection
+list_n <- c(60)                      # List of number of variables kept after pre-selection
 list_reg <- c(1,2,3,4,5,6,7)                      # List of regressions techniques
 # The AR benchmark is always performed - regardless of selection
 # 1 = OLS
@@ -122,15 +131,9 @@ fast_bma <- 1                           # 1 = fast version - i.e. runs with less
 n_per <- 12                             # Number of periods (last available ones) on which the optimization of the hyper-parameters for ML is performed
 sc_ml <- 1                              # Switch on whether the data should be scaled for ML methods (0 = no, 1 = yes)
 fast_MRF <- 1                           # 1 = fast tuning only on number of variables in linear part
-# 0 = full tuning on 5 hyper-parameters (see code)
+# 0 = full tuning on 5 hyper-parameters
 
 
-# Load functions
-source("Code/Clean.R")         # Program cleaning the dataset (interpolation of missing data, elimination of variables starting after min_start_date)
-source("Code/Align.R")         # Program doing the re-alignment - see section 2.1 of Chinn et al. (2023)
-source("Code/PreSelection.R")  # Program doing the pre-selection - see section 1.3 of Chinn et al. (2023)
-source("Code/Regression.R")    # Program doing the regressions - see section 1.5 of Chinn et al. (2023)
-source("COde/Tuning.R")        # Program doing the tuning of hyper-parameters for machine learning methods
 
 
 # ----------------------------------------------------------------------------
@@ -146,10 +149,10 @@ data_rmv <- doClean(data_init,min_start_date)
 
 
 # ----------------------------------------------------------------------------
-# STEP 3 - PERFORM THE HORSERACE (LOOP OVER USER PARAMETERS)
+# STEP 3 - PERFORM THE LOOP
 # ----------------------------------------------------------------------------
 
-# Loop over user-defined horizons
+# Loop over defined horizons
 for (hh in 1:length(list_h)){
   
   # Get horizon to test
@@ -348,7 +351,7 @@ for (hh in 1:length(list_h)){
                                                      ".csv")},
                 row.names=FALSE)
       
-      # Summarizing and writing aggregate results
+      # Summarising and writing aggregate results
       err <- function(X,Y){sqrt(sum((X-Y)^2)/length(Y))}
       
       total <- results %>%
@@ -415,10 +418,8 @@ for (hh in 1:length(list_h)){
                                            "_h_",
                                            horizon,
                                            "_",
-                                           start_date_oos,
-                                           "_",
-                                           end_date_oos,
                                            ".csv"),
             row.names=FALSE)
   
 } # End of loop on horizon
+
