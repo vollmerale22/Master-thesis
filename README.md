@@ -9,5 +9,13 @@ The following methods are used:
 - Random Forests
 - Long Short Term Memory
 
+# Statistical Methods
+
+The following statistical methods are used: 
+- Markov-Switching
+- AutoRegressive Model
+- Quantile Regression
+- OLS
+
 # Pre Processing Methods
 - Least Angle Regression (LARS) as: Efron, B., Hastie, T., Johnstone, I., and Tibshirani, R. (2004). “Least angle regression”, Annals of Statistics, 32(2), pp. 407–499
