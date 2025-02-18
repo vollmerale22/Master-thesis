@@ -40,6 +40,12 @@ library(stats)
 library(seasonal)
 library(lubridate)
 library(future.apply)
+library(keras)
+library(tensorflow)
+
+install_keras()
+
+
 
 rm(list = ls())
 # Function to check if a time series is stationary
@@ -73,8 +79,12 @@ source("Code/Clean.R")
 source("Code/Align.R")        
 source("Code/PreSelection.R")  
 source("Code/Regression.R")    
-source("COde/Tuning.R")        
+source("COde/Tuning.R")
 source("Code/Seasonality.R") 
+
+
+source("Code/Tuning new.R")
+source("Code/Regression new.R")
 
 # ----------------------------------------------------------------------------
 # Adjust seasonality and standardise data 
@@ -92,17 +102,17 @@ final_transformed_data <- transformed_data %>%
 }))
 
 # Save the transformed data to a new Excel file
-output_file <- "Data/transformed_data_test.xlsx"  # Replace with your desired output file name
+output_file <- "Data/transformed_data_test.xlsx"  
 write_xlsx(final_transformed_data, output_file)
 
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
 name_input <- output_file  # Name of the input file
-min_start_date <- "2008-01-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2017-01-15"          # Start date for OOS predictions
+min_start_date <- "2001-01-15"          # Minimum start date for variables (otherwise discarded)
+start_date_oos <- "2014-01-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
-list_h <- c(0,1)                      # List of horizons for back-, now- or fore-cast takes place
+list_h <- c(-1)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
 list_methods <- c(1)                  # List of pre-selection methods
 # 0 = No pre-selection
@@ -111,8 +121,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(1,2,3,4,5,6,7)                      # List of regressions techniques
-# The AR benchmark is always performed - regardless of selection
+list_reg <- c(7)                      # List of regressions techniques
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
 # 3 = Quantile regression
@@ -120,24 +129,23 @@ list_reg <- c(1,2,3,4,5,6,7)                      # List of regressions techniqu
 # 5 = XG Boost tree
 # 6 = Macroeconomic Random Forest
 # 7 = XG Boost linear
-
 # User parameters - 3
 # Optional inputs (calibration)
 do_factors <- 1                         # Switch on whether to do factors or not
 # 0 = no factors
 # 1 = factors
-fast_bma <- 1                           # 1 = fast version - i.e. runs with less iterations
+fast_bma <- 0                          # 1 = fast version - i.e. runs with less iterations
 # 0 = full number of iterations
 n_per <- 12                             # Number of periods (last available ones) on which the optimization of the hyper-parameters for ML is performed
 sc_ml <- 1                              # Switch on whether the data should be scaled for ML methods (0 = no, 1 = yes)
-fast_MRF <- 1                           # 1 = fast tuning only on number of variables in linear part
+fast_MRF <- 0                         # 1 = fast tuning only on number of variables in linear part
 # 0 = full tuning on 5 hyper-parameters
 
 
 
 
 # ----------------------------------------------------------------------------
-# STEP 2 - READ (AND CLEAN) THE USER-PROVIDED DATASET
+# STEP 2 - READ (AND CLEAN)
 # ----------------------------------------------------------------------------
 
 # Read data
@@ -164,13 +172,13 @@ for (hh in 1:length(list_h)){
   # Initializing the output
   summary_ps_meth <- data.frame(NA)
   
-  # Loop over user-defined methods
+  # Loop over defined methods
   for (mm in 1:length(list_methods)){
     
-    # Initializing the output of the results comparison exercise
+    # Initialising the output of the results comparison exercise
     select_method = as.numeric(list_methods[mm])
     
-    # Loop over user-defined number of variables
+    # Loop over defined number of variables
     for (nn in 1:length(list_n)){
       
       # Get values of the test
@@ -305,7 +313,7 @@ for (hh in 1:length(list_h)){
         results[ii-n_start+1,1] <- date_ii
         
         # Run regressions
-        temp_res <- run_regressions(smpl_in,
+        temp_res <- run_regressions_new(smpl_in,
                                     smpl_out,
                                     list_reg,
                                     n_sel,
@@ -423,3 +431,11 @@ for (hh in 1:length(list_h)){
   
 } # End of loop on horizon
 
+# ----------------------------------------------------------------------------
+# STEP 4 - PERFORM TESTS
+# ----------------------------------------------------------------------------
+source("Code/Dm test.R")
+dm_results <- perform_dm_test(results, h = 1, loss = function(e) e^2)
+print(dm_results)
+# Save results to CSV
+write.csv(dm_results, file = "./2-Output/dm_test_results.csv", row.names = FALSE)
