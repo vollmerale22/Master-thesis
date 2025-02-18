@@ -3,20 +3,7 @@ run_regressions <- function(smpl_in,smpl_out,list_methods,n_sel,sc_ml,fast_MRF){
   # Inputs:
   # smpl_in = in-sample data [data.frame]
   # y = out-of-sample data [vector]
-  #     NB: in the current version of the code, it should contain target, L1st_target, and L2nd_target
-  # list_methods = list of regressions techniques to be tested [list of scalars]
-  #                NB: the AR benchmark is always performed - regardless of selection
-  #            1 = OLS
-  #            2 = Markov-switching regression [requires 1]
-  #            3 = Quantile regression
-  #            4 = Random forest
-  #            5 = XG Boost tree
-  #            6 = Macroeconomic Random Forest
-  #            7 = XG Boost linear
-  # n_per = number of periods on which the optimization of the hyper-parameters is performed [scalar]
-  # sc_ml = switch on whether data should be scaled for ML methods (0 = no, 1 = yes)
-  # fast_MRF = switch on whether to perform a faster tuning of the MRF (0 = no, 1 = yes)
-  
+  # n_per = number of periods on which the optimisation of the hyper-parameters is performed [scalar]
   #
   # Output: results = dataframe with the true value and the predictions of each model (plus the AR)
   #         NB: results is of dimension length(list_methods)+2 (the true value, and the AR)
@@ -99,7 +86,9 @@ run_regressions <- function(smpl_in,smpl_out,list_methods,n_sel,sc_ml,fast_MRF){
   
   # Markov-switching
   if(2 %in% list_methods){
+    
     print("Forecasting with Markov-switching")
+    set.seed(1234)
     out <- tryCatch({
       eq_ms_allf <- msmFit(eq_lm_allf,
                            k = 2,
@@ -159,6 +148,7 @@ run_regressions <- function(smpl_in,smpl_out,list_methods,n_sel,sc_ml,fast_MRF){
   
   # Random forest
   if(4 %in% list_methods){
+    set.seed(1234)
     
     
     # Calling a tuning function from DoTuning.R
@@ -191,6 +181,7 @@ run_regressions <- function(smpl_in,smpl_out,list_methods,n_sel,sc_ml,fast_MRF){
   
   # XGBoost tree
   if(5 %in% list_methods){
+    set.seed(1234)
     
     # Calling a tuning function from DoTuning.R
     # The tuning is done on the last n_per periods
@@ -229,7 +220,7 @@ run_regressions <- function(smpl_in,smpl_out,list_methods,n_sel,sc_ml,fast_MRF){
     
     # Set seed for reproducibility
     # NB: has to be the same as in DoTuning.R
-    set.seed(22122)
+    set.seed(1234)
     
     if(fast_MRF==0){
       
