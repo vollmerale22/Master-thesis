@@ -115,147 +115,13 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
 }
 
 # =======================================================================================================================================
-# Macroeconomic Random Forest
-
-# Full version
-tune_MRF_new <- function(data.in, initial_window, horizon = 12, n_folds = 5, seed = 1234) {
-  # data.in: Matrix (or data.frame) with target in column 1 and predictors in remaining columns
-  # initial_window: Number of initial observations used for training in the first fold
-  # horizon: Number of periods to forecast (e.g., 12)
-  # n_folds: Number of rolling CV folds
-  # seed: For reproducibility
-  
-  set.seed(seed)
-  print("Tuning macroeconomic random forest")
-  # Determine candidate values for n_var (number of variables in the linear part)
-  total_preds <- ncol(data.in) - 1  # predictors count
-  m_min <- min(5, total_preds)
-  m_max <- max(total_preds, 9)
-  # Ensure we don’t exceed available predictors (x.pos are columns 2 to n_var)
-  n_var_candidates <- seq(from = m_min, to = min(m_max, total_preds + 1), by = 2)
-  
-  # Create grid for all hyper-parameters
-  grid <- expand.grid(
-    n_trees = c(25, 50),
-    n_var   = n_var_candidates,
-    lambda  = c(0.001, 0.01, 0.1),
-    re_meth = c(2, 4),
-    bl_size = c(6, 12)
-  )
-  grid$RMSE <- NA
-  
-  n <- nrow(data.in)
-  total_splits <- n - initial_window - horizon + 1
-  if (total_splits < n_folds) {
-    n_folds <- total_splits
-  }
-  # Select n_folds evenly spaced splits (or randomly sample splits)
-  splits <- sort(sample(1:total_splits, n_folds))
-  
-  # Loop over each candidate parameter combination
-  for (i in 1:nrow(grid)) {
-    params <- grid[i, ]
-    cv_errors <- c()
-    
-    for (fold in splits) {
-      train_end <- initial_window + fold - 1
-      data_tr <- data.in[1:train_end, , drop = FALSE]
-      n_train <- nrow(data_tr)
-      test_indices <- (n_train - horizon + 1):n_train
-      y_te_cv <- data_tr[test_indices, 1]  # Actual target values for test period
-      
-      # Remove target values in test set to mimic out‑of‑sample forecast
-      data_tr[test_indices, 1] <- NA
-      
-      # Set seed for this fold (using an offset)
-      set.seed(seed + fold)
-      model <- MRF(data_tr,
-                   B = params$n_trees,
-                   x.pos = 2:params$n_var,
-                   oos.pos = nrow(data_tr),
-                   cheap.look.at.GTVPs = FALSE,
-                   printb = FALSE,
-                   ridge.lambda = params$lambda,
-                   resampling.opt = params$re_meth,
-                   block.size = params$bl_size)
-      pred <- model$pred
-      error <- sqrt(mean((pred - y_te_cv)^2))
-      cv_errors <- c(cv_errors, error)
-    }
-    grid$RMSE[i] <- mean(cv_errors)
-  }
-  
-  best <- grid[which.min(grid$RMSE), ]
-  message("Best full MRF parameters using rolling origin CV:")
-  print(best)
-  return(best)
-}
-# Faster version
-tune_MRF_fast_new <- function(data.in, initial_window, horizon = 12, n_folds = 5, seed = 1234) {
-  # data.in: Matrix (or data.frame) with target in column 1 and predictors in remaining columns
-  # initial_window: Number of initial observations for training in the first fold
-  # horizon: Forecast horizon (e.g., 12)
-  # n_folds: Number of CV folds
-  # seed: For reproducibility
-  
-  set.seed(seed)
-  print("Tuning macroeconomic random forest (fast version)")
-  
-  total_preds <- ncol(data.in) - 1
-  m_min <- min(5, total_preds)
-  m_max <- max(total_preds, 9)
-  n_var_candidates <- seq(from = m_min, to = min(m_max, total_preds + 1), by = 2)
-  
-  results <- data.frame(n_var = n_var_candidates, RMSE = NA)
-  
-  n <- nrow(data.in)
-  total_splits <- n - initial_window - horizon + 1
-  if (total_splits < n_folds) {
-    n_folds <- total_splits
-  }
-  splits <- sort(sample(1:total_splits, n_folds))
-  
-  for (i in 1:length(n_var_candidates)) {
-    cv_errors <- c()
-    candidate <- n_var_candidates[i]
-    
-    for (fold in splits) {
-      train_end <- initial_window + fold - 1
-      data_tr <- data.in[1:train_end, , drop = FALSE]
-      n_train <- nrow(data_tr)
-      test_indices <- (n_train - horizon + 1):n_train
-      y_te_cv <- data_tr[test_indices, 1]
-      
-      # Remove test targets to simulate forecasting
-      data_tr[test_indices, 1] <- NA
-      
-      set.seed(seed + fold)
-      model <- MRF(data_tr,
-                   x.pos = 2:candidate,
-                   oos.pos = nrow(data_tr),
-                   cheap.look.at.GTVPs = FALSE,
-                   printb = FALSE)
-      pred <- model$pred
-      error <- sqrt(mean((pred - y_te_cv)^2))
-      cv_errors <- c(cv_errors, error)
-    }
-    results$RMSE[i] <- mean(cv_errors)
-  }
-  
-  best <- results[which.min(results$RMSE), ]
-  message("Best fast MRF parameter (n_var) using rolling origin CV:")
-  print(best)
-  return(best)
-}
-
-
-# =======================================================================================================================================
 # XG Boost - linear
 
 tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
+  print("Tuning linear gradient boosting (gblinear) with rolling window CV")
   set.seed(seed)
-
-  print("Tuning linear gradient boosting")
+  
+  # Define grid for hyperparameters: nrounds, eta, and alpha (L1 regularization)
   grid <- expand.grid(
     nrounds = seq(10, 130, by = 30),
     eta = c(0.05, 0.1, 0.2, 0.3),
@@ -263,15 +129,20 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   )
   grid$RMSE <- NA
   
+  # Determine the number of rolling splits available
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
-  if(total_splits < n_folds) {
+  if (total_splits < n_folds) {
     n_folds <- total_splits
   }
+  # Randomly select CV splits (rolling windows)
   splits <- sort(sample(1:total_splits, n_folds))
   
+  # Loop over each combination in the grid
   for (i in 1:nrow(grid)) {
     cv_errors <- c()
+    
+    # Loop over each CV fold (rolling window)
     for (fold in splits) {
       train_end <- initial_window + fold - 1
       train_indices <- 1:train_end
@@ -284,6 +155,7 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
       
       dtrain <- xgb.DMatrix(data = x_train, label = y_train)
       
+      # For reproducibility in each fold
       set.seed(seed + fold)
       model <- xgb.train(
         data = dtrain,
@@ -294,62 +166,318 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
         objective = "reg:squarederror",
         verbose = 0
       )
+      
       preds <- predict(model, newdata = x_valid)
       rmse <- sqrt(mean((preds - y_valid)^2))
       cv_errors <- c(cv_errors, rmse)
     }
+    
     grid$RMSE[i] <- mean(cv_errors)
   }
   
+  # Select the best hyperparameters based on lowest RMSE
   best <- grid[which.min(grid$RMSE), ]
   message("Best XGBoost Linear parameters using rolling origin CV:")
   print(best)
+  
   return(best)
 }
-tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
-  # x: predictor matrix (ordered in time)
-  # y: target vector (ordered in time)
-  # initial_window: number of initial observations for training in the first fold
-  # horizon: forecast horizon for each fold
-  # n_folds: number of rolling CV folds
-  # seed: reproducibility seed
+
+# =======================================================================================================================================
+# Macroeconomic Random Forest
+
+# Full version
+tune_MRF <- function(data.in,n){
   
+  # Inputs:
+  # data.in = dataset with target in first column and variables in other columns - should be a matrix
+  # n = number of periods on which the hyper-parameter should be optimized
+  # Output:
+  # optim_param = vector of best-performing hyper-parameters in the following order:
+  #           1 = n_trees (number of trees - default value = 50)
+  #           2 = n_var (number of variables in the linear part)
+  #           3 = lambda (ridge shrinkage parameter in the linear part - default value = 0.01)
+  #           4 = re_meth (resampling method - default value = 2, goes from 0 to 4)
+  #           5 = bl_size (block size for resampling - default value = 12)
+  # NB: other variables might be optimized but are not looked at here for the sake of time
+  
+  print("Tuning macroeconomic random forest")
+  
+  # Start and end values
+  n_tot <- nrow(data.in)
+  n_test <- n_tot - n + 1
+  
+  # Define train and test samples
+  data.tr <- data.in[-n_tot,]
+  y_te <- data.tr[(n_test-1):(n_tot-1),1]
+  data.tr[(n_test-1):(n_tot-1),1] <- NA
+  
+  #
+  # Step 1: n_trees and n_var
+  #
+  
+  # Summary dataframe
+  summary <- data.frame(matrix(NA,
+                               nrow = 1,
+                               ncol = 3))
+  colnames(summary) <- c("n_trees","n_var","RMSE")
+  count_mod <- 1 
+  
+  m_min <- min(5,ncol(x))
+  m_max <- max(ncol(x),9)
+  
+  for (n_trees in c(25,50)){
+    for (n_var in seq(m_min,m_max,by=2)){
+      
+      # Set seed for reproducibility
+      # NB: has to be the same as in Main.R
+      set.seed(22122) 
+      
+      # Fit model on train
+      eq_mrf <- MRF(data.tr,
+                    B = n_trees,
+                    x.pos = c(2:n_var),
+                    oos.pos = c((nrow(data.tr)-11):nrow(data.tr)),
+                    cheap.look.at.GTVPs = FALSE,
+                    printb = FALSE)
+      
+      # Predict on test
+      fit <- eq_mrf$pred
+      
+      # Write summary and advance counter
+      summary[count_mod,1] <- n_trees
+      summary[count_mod,2] <- n_var
+      summary[count_mod,3] <- sqrt(sum((fit - y_te)^2)/length(y_te))
+      count_mod <-  count_mod + 1
+      
+    }
+  }
+  
+  # Select best hyper-parameter and return it
+  summary %<>%
+    arrange(RMSE)
+  optim_trees <- summary[1,1]
+  optim_var <- summary[1,2]
+  
+  
+  #
+  # Step 2: L2 regularization parameter
+  #
+  
+  # Summary dataframe
+  summary <- data.frame(matrix(NA,
+                               nrow = 1,
+                               ncol = 2))
+  colnames(summary) <- c("lambda","RMSE")
+  count_mod <- 1 
+  
+  for (lambda in c(0.001,0.01,0.1)){
+    
+    # Set seed for reproducibility
+    # NB: has to be the same as in Main.R
+    set.seed(1234) 
+    
+    # Fit model on train
+    eq_mrf <- MRF(data.tr,
+                  B = optim_trees,
+                  x.pos = c(2:optim_var),
+                  oos.pos = c((nrow(data.tr)-11):nrow(data.tr)),
+                  cheap.look.at.GTVPs = FALSE,
+                  printb = FALSE,
+                  ridge.lambda = lambda)
+    
+    # Predict on test
+    fit <- eq_mrf$pred
+    
+    # Write summary and advance counter
+    summary[count_mod,1] <- lambda
+    summary[count_mod,2] <- sqrt(sum((fit - y_te)^2)/length(y_te))
+    count_mod <-  count_mod + 1
+    
+  }
+  
+  # Select best hyper-parameter and return it
+  summary %<>%
+    arrange(RMSE)
+  optim_lambda <- summary[1,1]
+  
+  
+  #
+  # Step 3: re-sampling
+  #
+  
+  # Summary dataframe
+  summary <- data.frame(matrix(NA,
+                               nrow = 1,
+                               ncol = 3))
+  colnames(summary) <- c("re_meth","bl_size","RMSE")
+  count_mod <- 1 
+  
+  for (re_meth in c(2,4)){
+    for (bl_size in c(6,12)){
+      
+      # Set seed for reproducibility
+      # NB: has to be the same as in Main.R
+      set.seed(1234) 
+      
+      # Fit model on train
+      eq_mrf <- MRF(data.tr,
+                    B = optim_trees,
+                    x.pos = c(2:optim_var),
+                    oos.pos = c((nrow(data.tr)-11):nrow(data.tr)),
+                    cheap.look.at.GTVPs = FALSE,
+                    printb = FALSE,
+                    ridge.lambda = optim_lambda,
+                    resampling.opt = re_meth,
+                    block.size = bl_size)
+      
+      # Predict on test
+      fit <- eq_mrf$pred
+      
+      # Write summary and advance counter
+      summary[count_mod,1] <- re_meth
+      summary[count_mod,2] <- bl_size
+      summary[count_mod,3] <- sqrt(sum((fit - y_te)^2)/length(y_te))
+      count_mod <-  count_mod + 1
+      
+    }
+  }
+  
+  # Select best hyper-parameter and return it
+  summary %<>%
+    arrange(RMSE)
+  optim_meth <- summary[1,1]
+  optim_size <- summary[1,2]
+  
+  
+  #
+  # Step 4: return list of optimal parameters
+  #
+  
+  optim_param <- c(optim_trees,
+                   optim_var,
+                   optim_lambda,
+                   optim_meth,
+                   optim_size)
+  
+  names(optim_param) <- c("ntrees",
+                          "nvar",
+                          "ridge",
+                          "resampling_method",
+                          "block_size")
+  
+  return(optim_param) 
+  
+}
+
+# Faster version
+tune_MRF_fast <- function(data.in,n){
+  
+  # Inputs:
+  # data.in = dataset with target in first column and variables in other columns - should be a matrix
+  # n = number of periods on which the hyper-parameter should be optimized
+  # Output:
+  # optim_param = vector of best-performing hyper-parameters in the following order:
+  #           1 = n_trees (number of trees - default value = 50)
+  # NB: other variables can be optimized in non-fast version (and even more in principle)
+  
+  print("Tuning macroeconomic random forest (fast version)")
+  
+  # Start and end values
+  n_tot <- nrow(data.in)
+  n_test <- n_tot - n + 1
+  
+  # Define train and test samples
+  data.tr <- data.in[-n_tot,]
+  y_te <- data.tr[(n_test-1):(n_tot-1),1]
+  data.tr[(n_test-1):(n_tot-1),1] <- NA
+  
+  # Summary dataframe
+  summary <- data.frame(matrix(NA,
+                               nrow = 1,
+                               ncol = 2))
+  colnames(summary) <- c("n_var","RMSE")
+  count_mod <- 1 
+  
+  m_min <- min(5,ncol(x))
+  m_max <- max(ncol(x),9)
+  
+  for (n_var in seq(m_min,m_max,by=2)){
+    
+    # Set seed for reproducibility
+    # NB: has to be the same as in Main.R
+    set.seed(1234) 
+    
+    # Fit model on train
+    eq_mrf <- MRF(data.tr,
+                  x.pos = c(2:n_var),
+                  oos.pos = c((nrow(data.tr)-11):nrow(data.tr)),
+                  cheap.look.at.GTVPs = FALSE,
+                  printb = FALSE)
+    
+    # Predict on test
+    fit <- eq_mrf$pred
+    
+    # Write summary and advance counter
+    summary[count_mod,1] <- n_var
+    summary[count_mod,2] <- sqrt(sum((fit - y_te)^2)/length(y_te))
+    count_mod <-  count_mod + 1
+    
+  }
+  
+  # Select best hyper-parameter and return it
+  summary %<>%
+    arrange(RMSE)
+  optim_param <- summary[1,1]
+  
+  names(optim_param) <- c("nvar")
+  return(optim_param) 
+  
+}
+# =======================================================================================================================================
+# LSTM
+
+tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
+  print("Tuning LSTM")
   set.seed(seed)
   
-  # Define grid for LSTM hyperparameters.
-  # Here we tune: units (number of LSTM cells), dropout rate, epochs, and batch_size.
+  # Define a grid of hyperparameters to search over.
   grid <- expand.grid(
     units = c(10, 20, 50),
     dropout = c(0, 0.2),
-    epochs = c(50, 100),
-    batch_size = c(32, 64)
+    epochs = c(30, 50),
+    batch_size = c(16, 32)
   )
   grid$RMSE <- NA
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
-  if(total_splits < n_folds) {
-    n_folds <- total_splits
-  }
+  if(total_splits < n_folds) n_folds <- total_splits
+  
+  # Select a set of rolling CV splits (here we sample indices from available splits)
   splits <- sort(sample(1:total_splits, n_folds))
   
-  for(i in 1:nrow(grid)){
+  # Loop over each hyperparameter combination in the grid.
+  for (i in 1:nrow(grid)) {
     cv_errors <- c()
-    for(fold in splits){
+    
+    # For each rolling CV fold:
+    for (fold in splits) {
       train_end <- initial_window + fold - 1
       train_indices <- 1:train_end
       valid_indices <- (train_end + 1):(train_end + horizon)
       
+      # Extract training and validation sets.
       x_train <- x[train_indices, , drop = FALSE]
       y_train <- y[train_indices]
       x_valid <- x[valid_indices, , drop = FALSE]
       y_valid <- y[valid_indices]
       
-      # Reshape predictors to 3D array: [samples, timesteps, features]
-      x_train_array <- array(x_train, dim = c(nrow(x_train), 1, ncol(x_train)))
-      x_valid_array <- array(x_valid, dim = c(nrow(x_valid), 1, ncol(x_valid)))
+      # Reshape predictors to 3D arrays: [samples, timesteps, features]
+      x_train_reshaped <- array(x_train, dim = c(nrow(x_train), 1, ncol(x_train)))
+      x_valid_reshaped <- array(x_valid, dim = c(nrow(x_valid), 1, ncol(x_valid)))
       
-      # Build a simple LSTM model
+      # Build the LSTM model using the current grid hyperparameters.
       model <- keras_model_sequential() %>%
         layer_lstm(units = grid$units[i],
                    input_shape = c(1, ncol(x_train)),
@@ -361,27 +489,30 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
         optimizer = "adam"
       )
       
-      set.seed(seed + fold)
+      # Fit the model on the training fold.
       history <- model %>% fit(
-        x = x_train_array,
+        x = x_train_reshaped,
         y = y_train,
         epochs = grid$epochs[i],
         batch_size = grid$batch_size[i],
         verbose = 0
       )
       
-      preds <- model %>% predict(x_valid_array)
+      # Predict on the validation fold.
+      preds <- model %>% predict(x_valid_reshaped)
+      preds <- as.numeric(preds)
       rmse <- sqrt(mean((preds - y_valid)^2))
       cv_errors <- c(cv_errors, rmse)
-      
-      # Clear session to free up memory
-      k_clear_session()
     }
+    
+    # Store the average RMSE for this hyperparameter combination.
     grid$RMSE[i] <- mean(cv_errors)
   }
   
+  # Select and return the best hyperparameters (lowest RMSE).
   best <- grid[which.min(grid$RMSE), ]
-  message("Best LSTM parameters using rolling origin CV:")
+  message("Best LSTM parameters using rolling CV:")
   print(best)
   return(best)
 }
+

@@ -46,8 +46,8 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
   eq_ar <- lm(target ~ ., 
               data = select(smpl_in, target, L1st_target),
               na.action = "na.omit")
-  results[1, 2] <- predict(eq_ar,
-                           newdata = select(smpl_out, L1st_target),
+  results[1, 2] <- stats::predict(eq_ar,
+                           newdata = as.data.frame(select(smpl_out, L1st_target)),
                            na.action = "na.omit")
   
   count_col <- 3  # starting column for ML methods
@@ -174,47 +174,59 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     names_col <- c(names_col, "pred_xgbt")
   }
   
-  # Macroeconomic Random Forest
-  if (6 %in% list_methods) {
-    # Prepare data: first column is target; remaining columns are predictors.
-    data.in <- rbind(cbind(y_train_ml, x_train_ml), cbind(NA, x_test_ml))
+  # Macroeconomic Random forest
+  if(6 %in% list_methods){
+    
+    # Prepare data
+    data.in <- rbind(cbind(y_train_ml,x_train_ml),cbind(NA,x_test_ml))
+    
+    # Set seed for reproducibility
+    # NB: has to be the same as in DoTuning.R
     set.seed(1234)
-    if (fast_MRF == 0) {
-      param <- tune_MRF_new(data.in, 
-                        initial_window = n_per, 
-                        horizon = 12, 
-                        n_folds = 5, 
-                        seed = 1234)
+    
+    if(fast_MRF==0){
+      
+      # Calling a tuning function from DoTuning.R
+      # The tuning is done on the last n_per periods
+      param <- tune_MRF(data.in,
+                        n_per)
+      
       print("Forecasting with macroeconomic random forest")
       eq_mrf <- MRF(data.in,
-                    B = param$n_trees,
-                    x.pos = 2:param$n_var,
+                    B = param[1],
+                    x.pos = c(2:param[2]),
                     oos.pos = nrow(data.in),
                     cheap.look.at.GTVPs = FALSE,
-                    ridge.lambda = param$lambda,
-                    resampling.opt = param$re_meth,
-                    block.size = param$bl_size,
+                    ridge.lambda = param[3],
+                    resampling.opt = param[4],
+                    block.size = param[5],
                     printb = FALSE)
-    } else if (fast_MRF == 1) {
-      param <- tune_MRF_fast_new(data.in, 
-                             initial_window = n_per, 
-                             horizon = 12, 
-                             n_folds = 5, 
-                             seed = 1234)
-      print("Forecasting with macroeconomic random forest (fast version)")
+      
+    }else if(fast_MRF==1){
+      
+      # Calling a tuning function from DoTuning.R
+      # The tuning is done on the last n_per periods
+      param <- tune_MRF_fast(data.in,
+                             n_per)
+      
+      print("Forecasting with macroeconomic random forest")
       eq_mrf <- MRF(data.in,
-                    x.pos = 2:param$n_var,
+                    x.pos = c(2:param),
                     oos.pos = nrow(data.in),
                     cheap.look.at.GTVPs = FALSE,
                     printb = FALSE)
+      
     }
-    results[1, count_col] <- eq_mrf$pred
-    if (sc_ml == 1) {
-      results[1, count_col] <- results[1, count_col] * sd(y_train) + mean(y_train)
-    }
+    
+    results[1,count_col] <- eq_mrf$pred
+    if(sc_ml==1){results[1,count_col] <- results[1,count_col]*sd(y_train) + mean(y_train)}
+    
     count_col <- count_col + 1
-    names_col <- c(names_col, "pred_mrf")
+    names_col <- c(names_col,"pred_mrf") 
+    
   }
+  
+  
   
   # XGBoost linear
   if (7 %in% list_methods) {
@@ -241,47 +253,56 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     count_col <- count_col + 1
     names_col <- c(names_col, "pred_xgbl")
   }
-  # LSTM Nowcasting (Hopp)
+  
+  
+  # LSTM Nowcasting
   if (8 %in% list_methods) {
     set.seed(1234)
-    # Tune LSTM using the new tuning function.
+    
+    # Tune LSTM using the new tuning function (rolling CV grid search)
     param <- tune_LSTM(x_train_ml, y_train_ml, 
-                       initial_window = n_per, 
-                       horizon = 12, 
-                       n_folds = 5, 
-                       seed = 1234)
-    print("Forecasting with LSTM nowcasting")
+                               initial_window = n_per, 
+                               horizon = 12, 
+                               n_folds = 5, 
+                               seed = 1234)
+    print("Forecasting with LSTM")
     
-    # Reshape training and test predictors for LSTM (3D arrays)
-    x_train_array <- array(x_train_ml, dim = c(nrow(x_train_ml), 1, ncol(x_train_ml)))
-    x_test_array  <- array(x_test_ml,  dim = c(nrow(x_test_ml), 1, ncol(x_test_ml)))
+    # Reshape the training and test predictors to 3D arrays:
+    x_train_reshaped <- array(x_train_ml, dim = c(nrow(x_train_ml), 1, ncol(x_train_ml)))
+    x_test_reshaped <- array(x_test_ml, dim = c(1, 1, ncol(x_test_ml)))
     
-    lstm_model <- keras_model_sequential() %>%
-      layer_lstm(units = param$units,
-                 input_shape = c(1, ncol(x_train_ml)),
-                 dropout = param$dropout) %>%
-      layer_dense(units = 1)
+    # Build the final LSTM model using the best hyperparameters.
+    model <- keras::keras_model_sequential() %>%
+      keras::layer_lstm(units = param$units, 
+                        input_shape = c(1, ncol(x_train_ml)), 
+                        dropout = param$dropout) %>%
+      keras::layer_dense(units = 1)
     
-    lstm_model %>% compile(
+    model %>% keras::compile(
       loss = "mean_squared_error",
       optimizer = "adam"
     )
     
-    history <- lstm_model %>% fit(
-      x = x_train_array,
+    # Fit the model on the entire training sample.
+    history <- model %>% keras::fit(
+      x = x_train_reshaped,
       y = y_train_ml,
       epochs = param$epochs,
       batch_size = param$batch_size,
       verbose = 0
     )
     
-    lstm_preds <- lstm_model %>% predict(x_test_array)
-    results[1, count_col] <- lstm_preds
+    # Predict for the test sample.
+    pred <- predict(model,x_test_reshaped)
+    pred <- as.numeric(pred)
+    
     if (sc_ml == 1) {
-      results[1, count_col] <- results[1, count_col] * sd(y_train) + mean(y_train)
+      pred <- pred * sd(y_train) + mean(y_train)
     }
+    
+    results[1, count_col] <- pred
     count_col <- count_col + 1
-    names_col <- c(names_col, "pred_lstm")
+    names_col <- c(names_col, "pred_lstm_custom")
   }
   
   colnames(results) <- names_col
