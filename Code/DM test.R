@@ -1,10 +1,8 @@
-perform_dm_test <- function(results, h = 1, loss = function(e) e^2) {
-  # 'results' must have a numeric 'true_value' column, a numeric 'ar' column, 
-  # and other numeric forecast columns (e.g. 'pred_rf', 'pred_mean', etc.).
-  #
-  # h: forecast horizon (default = 1)
-  # loss: a function that takes forecast errors and returns the loss (default = squared error)
-  
+perform_dm_test <- function(results, 
+                            h = 1, 
+                            loss = function(e) e^2, 
+                            one_sided = FALSE, 
+                            harvey_correction = FALSE) {
   # 1) Identify the actual (true) values
   if (!("true_value" %in% names(results))) {
     stop("No 'true_value' column found in 'results'!")
@@ -14,33 +12,61 @@ perform_dm_test <- function(results, h = 1, loss = function(e) e^2) {
     stop("'true_value' must be numeric!")
   }
   
-  # 2) Identify the benchmark forecast (e.g. 'ar')
-  if (!("ar" %in% names(results))) {
-    stop("No benchmark forecast column 'ar' found in 'results'!")
+  # 2) Identify the benchmark forecast (e.g. 'pred_ols')
+  if (!("pred_ols" %in% names(results))) {
+    stop("No benchmark forecast column 'pred_ols' found in 'results'!")
   }
-  benchmark <- results[["ar"]]
+  benchmark <- results[["pred_ols"]]
   
   # 3) Internal DM test function comparing two forecasts
-  dm_test <- function(actual, f1, f2, h = 1, loss = function(e) e^2) {
+  dm_test <- function(actual, f1, f2, h = 1, loss = function(e) e^2, 
+                      one_sided, harvey_correction) {
     e1 <- actual - f1
     e2 <- actual - f2
     d <- loss(e1) - loss(e2)
     dbar <- mean(d, na.rm = TRUE)
-    T_val <- length(na.omit(d))
+    T_val <- sum(!is.na(d))
     var_d <- var(d, na.rm = TRUE)
+    
     # Simple DM statistic (no Newey-West for h>1)
     DM_stat <- dbar / sqrt(var_d / T_val)
+    
+    # Apply Harvey et al. (1997) correction if requested
+    if (harvey_correction) {
+      CF <- sqrt((T_val + 1 - 2 * h + (h * (T_val - 1)) / T_val) / T_val)
+      DM_stat <- DM_stat * CF
+    }
+    
+    # Compute two-sided p-value
     p_value <- 2 * (1 - pnorm(abs(DM_stat)))
-    return(list(DM_statistic = DM_stat, p_value = p_value))
+    
+    # Adjust for one-sided test if required
+    if (one_sided) {
+      if (dbar < 0) {
+        p_value <- pnorm(DM_stat)      # left-tail
+      } else {
+        p_value <- 1 - pnorm(DM_stat)    # right-tail
+      }
+    }
+    
+    return(list(DM_statistic = DM_stat, p_value = p_value, mean_loss_diff = dbar))
   }
   
   # 4) Identify all forecast columns (exclude known columns)
-  forecast_names <- setdiff(names(results), c("date", "year", "true_value", "ar"))
+  forecast_names <- setdiff(names(results), c("date", "year", "true_value", "pred_ols"))
   
   # 5) Compare each forecast to the benchmark
   dm_results <- list()
   for (fn in forecast_names) {
-    dm_results[[fn]] <- dm_test(actual, results[[fn]], benchmark, h, loss)
+    dm_results[[fn]] <- dm_test(
+      actual,
+      f1 = results[[fn]],
+      f2 = benchmark,
+      h = h,
+      loss = loss,
+      one_sided = one_sided,
+      harvey_correction = harvey_correction
+    )
   }
   
   return(dm_results)
