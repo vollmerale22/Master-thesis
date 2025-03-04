@@ -1,4 +1,7 @@
 # Load packages
+#py_install("tensorflow", pip = TRUE)
+#reticulate::install_python()
+#install_tensorflow(version = "cpu")
 library(data.table)
 library(tseries)
 library(forecast)
@@ -17,18 +20,17 @@ library(factoextra)
 library(randomForest)
 library(glmnet)
 library(xgboost)
-library(keras)
-library(tensorflow)
 library(quantreg)
 library(MSwM)
 library(BMA)
 library(zoo)
 library(tseries)
 library(doBy)
+library(devtools)
+#install_github("philgoucou/macrorf", force = TRUE)
 library(MacroRF)
 library(tidyr)
 library(ggthemes)
-library(devtools)
 library(sandwich)
 library(lmtest)
 library(xtable)
@@ -40,10 +42,11 @@ library(stats)
 library(seasonal)
 library(lubridate)
 library(future.apply)
+library(reticulate)
 library(keras)
+install_keras()
 library(tensorflow)
 
-install_keras()
 
 
 
@@ -79,7 +82,7 @@ source("Code/Clean.R")
 source("Code/Align.R")        
 source("Code/PreSelection.R")  
 source("Code/Regression.R")    
-source("COde/Tuning.R")
+source("Code/Tuning.R")
 source("Code/Seasonality.R") 
 
 
@@ -108,11 +111,12 @@ write_xlsx(final_transformed_data, output_file)
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
+target_variable <- "world trade"
 name_input <- output_file  # Name of the input file
 min_start_date <- "2001-01-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2014-01-15"          # Start date for OOS predictions
+start_date_oos <- "2024-07-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
-list_h <- c(-1)                      # List of horizons for back-, now- or fore-cast takes place
+list_h <- c(0)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
 list_methods <- c(1)                  # List of pre-selection methods
 # 0 = No pre-selection
@@ -121,7 +125,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(7)                      # List of regressions techniques
+list_reg <- c(1,8)                      # List of regressions techniques
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
 # 3 = Quantile regression
@@ -129,7 +133,7 @@ list_reg <- c(7)                      # List of regressions techniques
 # 5 = XG Boost tree
 # 6 = Macroeconomic Random Forest
 # 7 = XG Boost linear
-# User parameters - 3
+# 8 = LSTM
 # Optional inputs (calibration)
 do_factors <- 1                         # Switch on whether to do factors or not
 # 0 = no factors
@@ -331,33 +335,7 @@ for (hh in 1:length(list_h)){
         mutate(pred_mean = rowMeans(select(results,starts_with("pred_"))),
                date = as_date(as.Date(as.POSIXct(date*24*60*60, origin="1970-01-01"))),
                year = year(date))
-      
-      # Create directory
-      dir.create(file.path(""), showWarnings = FALSE)
-      dir.create(file.path(paste0("",horizon)), showWarnings = FALSE)
-      
-      # Write results (predictions)
-      write.csv(select(results,-year), file = {output_dir <- paste0("./2-Output/",
-                                                                    paste0("h", horizon, "/"))
-      if (!dir.exists(output_dir)) {
-        dir.create(output_dir, recursive = TRUE)
-      }
-        paste0("./2-Output/",
-                                                     paste0("h",horizon,"/"),
-                                                     "pred_sel_",
-                                                     select_method,
-                                                     "_n_",
-                                                     n_var,
-                                                     "_reg_",
-                                                     #paste(list_reg, collapse='_'),
-                                                     "_h_",
-                                                     horizon,
-                                                     "_",
-                                                     start_date_oos,
-                                                     "_",
-                                                     end_date_oos,
-                                                     ".csv")},
-                row.names=FALSE)
+    
       
       # Summarising and writing aggregate results
       err <- function(X,Y){sqrt(sum((X-Y)^2)/length(Y))}
@@ -384,12 +362,15 @@ for (hh in 1:length(list_h)){
       
       # Writing results
       # Results are written for RMSE on crisis sample (2008-2009 and 2020-2021) and non-crisis sample
-      write.csv(summary_all, file = paste0("./2-Output/",
+      output_rmse <- paste0("./Output/",
+                            paste0("h", horizon, "/"))
+      if (!dir.exists(output_rmse)) {
+        dir.create(output_rmse, recursive = TRUE)
+      }
+      write.csv(summary_all, file = paste0("./Output/",
                                            paste0("h",horizon,"/"),
-                                           "rmse_sel_",
-                                           select_method,
-                                           "_n_",
-                                           n_var,
+                                           "rmse_",
+                                           target_variable,
                                            "_reg_",
                                            paste(list_reg, collapse='_'),
                                            "_h_",
@@ -399,43 +380,17 @@ for (hh in 1:length(list_h)){
                                            "_",
                                            end_date_oos,
                                            ".csv"))
-      
-      # Write results to the summary
-      tot_meth <- length(list_methods)
-      num_col <- 1+(mm-1)*tot_meth+nn
-      summary_ps_meth[1,num_col] <- select_method
-      summary_ps_meth[2,num_col] <- n_var
-      summary_ps_meth[3:(nrow(summary_all)+2),num_col] <- summary_all$total
-      summary_ps_meth[3:(nrow(summary_all)+2),1] <- rownames(summary_all)
-      
     } # End of loop on number of variables
   } # End of loop on pre-selection method
-  
-  # Write results
-  # This is a summary of all the tested methods
-  summary_ps_meth[1,1] <- "pre-selection"
-  summary_ps_meth[2,1] <- "nb variables"
-  write.csv(summary_ps_meth, file = paste0("./2-Output/",
-                                           paste0("h",horizon,"/"),
-                                           "summaryALL_sel_",
-                                           paste(list_methods,collapse='_'),
-                                           "_n_",
-                                           paste(list_n,collapse='_'),
-                                           "_reg_",
-                                           paste(list_reg, collapse='_'),
-                                           "_h_",
-                                           horizon,
-                                           "_",
-                                           ".csv"),
-            row.names=FALSE)
-  
 } # End of loop on horizon
 
 # ----------------------------------------------------------------------------
 # STEP 4 - PERFORM TESTS
 # ----------------------------------------------------------------------------
 source("Code/Dm test.R")
-dm_results <- perform_dm_test(results, h = 1, loss = function(e) e^2)
+dm_results <- perform_dm_test(results, h = 1, loss = function(e) e^2,
+                              one_sided = TRUE, 
+                              harvey_correction = TRUE)
 print(dm_results)
 # Save results to CSV
 write.csv(dm_results, file = "./2-Output/dm_test_results.csv", row.names = FALSE)
