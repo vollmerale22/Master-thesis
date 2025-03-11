@@ -111,10 +111,10 @@ write_xlsx(final_transformed_data, output_file)
 # ----------------------------------------------------------------------------
 # STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
 # ----------------------------------------------------------------------------
-target_variable <- "world trade"
+target_variable <- "EU exports"
 name_input <- output_file  # Name of the input file
 min_start_date <- "2001-01-15"          # Minimum start date for variables (otherwise discarded)
-start_date_oos <- "2024-07-15"          # Start date for OOS predictions
+start_date_oos <- "2012-01-15"          # Start date for OOS predictions
 end_date_oos <- "2024-07-15"            # End date for OOS predictions
 list_h <- c(0)                      # List of horizons for back-, now- or fore-cast takes place
 # Negative for a back-cast, 0 for a now-cast and positive for a fore-cast
@@ -125,7 +125,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(1,8)                      # List of regressions techniques
+list_reg <- c(1)                      # List of regressions techniques
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
 # 3 = Quantile regression
