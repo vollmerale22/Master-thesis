@@ -261,10 +261,10 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     
     # Tune LSTM using the new tuning function (rolling CV grid search)
     param <- tune_LSTM(x_train_ml, y_train_ml, 
-                               initial_window = n_per, 
-                               horizon = 12, 
-                               n_folds = 5, 
-                               seed = 1234)
+                       initial_window = n_per, 
+                       horizon = 12, 
+                       n_folds = 5, 
+                       seed = 1234)
     print("Forecasting with LSTM")
     
     # Reshape the training and test predictors to 3D arrays:
@@ -275,13 +275,17 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     model <- keras::keras_model_sequential() %>%
       keras::layer_lstm(units = param$units, 
                         input_shape = c(1, ncol(x_train_ml)), 
-                        dropout = param$dropout) %>%
+                        dropout = param$dropout,
+                        recurrent_dropout = param$recurrent_dropout) %>%
       keras::layer_dense(units = 1)
     
     model %>% keras::compile(
       loss = "mean_squared_error",
       optimizer = "adam"
     )
+    # Use callbacks in the final training.
+    early_stop <- callback_early_stopping(monitor = "val_loss", patience = 5)
+    lr_reduce <- callback_reduce_lr_on_plateau(monitor = "val_loss", factor = 0.5, patience = 3)
     
     # Fit the model on the entire training sample.
     history <- model %>% keras::fit(
@@ -289,7 +293,9 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
       y = y_train_ml,
       epochs = param$epochs,
       batch_size = param$batch_size,
-      verbose = 0
+      verbose = 1,
+      validation_split = 0.2,
+      callbacks = list(early_stop, lr_reduce)
     )
     
     # Predict for the test sample.
@@ -303,6 +309,10 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     results[1, count_col] <- pred
     count_col <- count_col + 1
     names_col <- c(names_col, "pred_lstm_custom")
+    # ----- CLEANUP -----
+    rm(model, history, x_train_reshaped, x_test_reshaped, pred)
+    keras::k_clear_session()
+    gc()
   }
   
   colnames(results) <- names_col

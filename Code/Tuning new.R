@@ -443,10 +443,11 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
   
   # Define a grid of hyperparameters to search over.
   grid <- expand.grid(
-    units = c(10, 20, 50),
-    dropout = c(0, 0.2),
-    epochs = c(30, 50),
-    batch_size = c(16, 32)
+    units = 50,
+    dropout = 0.3,
+    recurrent_dropout = 0.2,
+    epochs = 30,
+    batch_size = 32
   )
   grid$RMSE <- NA
   
@@ -481,13 +482,17 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       model <- keras_model_sequential() %>%
         layer_lstm(units = grid$units[i],
                    input_shape = c(1, ncol(x_train)),
-                   dropout = grid$dropout[i]) %>%
+                   dropout = grid$dropout[i],
+                   recurrent_dropout = grid$recurrent_dropout[i]) %>%
         layer_dense(units = 1)
       
       model %>% compile(
         loss = "mean_squared_error",
         optimizer = "adam"
       )
+      # Use callbacks for early stopping and learning rate reduction.
+      early_stop <- callback_early_stopping(monitor = "val_loss", patience = 5)
+      lr_reduce <- callback_reduce_lr_on_plateau(monitor = "val_loss", factor = 0.5, patience = 3)
       
       # Fit the model on the training fold.
       history <- model %>% fit(
@@ -495,7 +500,9 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
         y = y_train,
         epochs = grid$epochs[i],
         batch_size = grid$batch_size[i],
-        verbose = 0
+        verbose = 0,
+        validation_data = list(x_valid_reshaped, y_valid),
+        callbacks = list(early_stop, lr_reduce)
       )
       
       # Predict on the validation fold.
@@ -503,6 +510,10 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       preds <- as.numeric(preds)
       rmse <- sqrt(mean((preds - y_valid)^2))
       cv_errors <- c(cv_errors, rmse)
+      # ----- CLEANUP -----
+      rm(model, history, preds, x_train_reshaped, x_valid_reshaped)
+      keras::k_clear_session()
+      gc()
     }
     
     # Store the average RMSE for this hyperparameter combination.
