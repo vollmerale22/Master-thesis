@@ -49,7 +49,7 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
   results[1, 2] <- stats::predict(eq_ar,
                            newdata = as.data.frame(select(smpl_out, L1st_target)),
                            na.action = "na.omit")
-  
+
   count_col <- 3  # starting column for ML methods
   
   # OLS
