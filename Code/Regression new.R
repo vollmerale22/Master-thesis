@@ -42,12 +42,12 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     x_all_ml <- x_all
   }
   
-  # AR model (using lag 1 target)
+  # AR model (using lag 2 target)
   eq_ar <- lm(target ~ ., 
-              data = select(smpl_in, target, L1st_target),
+              data = select(smpl_in, target, L1st_target, L2nd_target), # with two lags
               na.action = "na.omit")
   results[1, 2] <- stats::predict(eq_ar,
-                           newdata = as.data.frame(select(smpl_out, L1st_target)),
+                           newdata = as.data.frame(select(smpl_out, L1st_target, L2nd_target)),
                            na.action = "na.omit")
 
   count_col <- 3  # starting column for ML methods
