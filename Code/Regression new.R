@@ -46,11 +46,33 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
   eq_ar <- lm(target ~ ., 
               data = select(smpl_in, target, L1st_target, L2nd_target), # with two lags
               na.action = "na.omit")
-  results[1, 2] <- stats::predict(eq_ar,
+  results[1, 2] <- predict(eq_ar,
                            newdata = as.data.frame(select(smpl_out, L1st_target, L2nd_target)),
                            na.action = "na.omit")
 
+
+  
+  # ARIMA
+  #arima_model <- auto.arima(smpl_in$target)
+  #arima_forecast <- forecast(arima_model, h = 1)$mean[1]
+  #results[1, 3] <- arima_forecast
+  
   count_col <- 3  # starting column for ML methods
+  
+  #DFM 
+  if(0 %in% list_methods){
+    print("Forecasting with DFM")
+    pca_model <- prcomp(x_train, scale. = TRUE)
+    num_factors <- 3  # You can choose this based on the explained variance criterion
+    factors_train <- pca_model$x[, 1:num_factors, drop = FALSE]
+    dfm_model <- lm(smpl_in$target ~ ., data = as.data.frame(factors_train))
+    # For forecasting, get factor scores from x_test
+    factors_test <- predict(pca_model, newdata = x_test)[, 1:num_factors, drop = FALSE]
+    dfm_forecast <- predict(dfm_model, newdata = as.data.frame(factors_test))
+    results[1, count_col] <- dfm_forecast
+    names_col <- c(names_col, "pred_dfm")
+    count_col <- count_col + 1
+  }
   
   # OLS
   if (1 %in% list_methods) {
