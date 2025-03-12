@@ -29,17 +29,21 @@ adjust_seasonality_large <- function(data, freq = 12, method = "SEATS", handle_N
     
     return(adjusted_series)  # Successfully adjusted series
   }
+  old_plan <- future::plan()         # Save the current plan
+  on.exit(future::plan(old_plan), add = TRUE)  # Restore the plan on exit
   
-  # Apply function to each numeric column (excluding "date") using parallel processing
-  plan(multisession, workers = parallel::detectCores() - 1)
+  # Use availableCores() and cap the number of workers at 20 to avoid oversubscription
+  n_workers <- min(future::availableCores(), 20)
+  future::plan(multisession, workers = n_workers)
   
-  adjusted_data <- as.data.frame(future_lapply(names(data)[-1], function(col_name) {
+  # Apply the adjustment function to each numeric column (excluding "date")
+  adjusted_list <- future.apply::future_lapply(names(data)[-1], function(col_name) {
     adjust_column(data[[col_name]], col_name)
-  }, future.seed = TRUE))
+  }, future.seed = TRUE)
   
-  colnames(adjusted_data) <- names(data)[-1]  # Keep original column names
-  adjusted_data <- cbind(date = data$date, adjusted_data)  # Reattach date
-  
+  # Reassemble the adjusted data
+  adjusted_data <- as.data.frame(adjusted_list)
+  colnames(adjusted_data) <- names(data)[-1]  # Restore original column names
+  adjusted_data <- cbind(date = data$date, adjusted_data)  # Reattach the date column  
   return(adjusted_data)
 }
-
