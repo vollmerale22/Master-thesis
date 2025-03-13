@@ -63,7 +63,11 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
   if(0 %in% list_methods){
     print("Forecasting with DFM")
     pca_model <- prcomp(x_train, scale. = TRUE)
-    num_factors <- 3  # You can choose this based on the explained variance criterion
+    eigenvalues <- pca_model$sdev^2
+    num_factors <- sum(eigenvalues > 1)
+    if (num_factors < 1) {
+      num_factors <- 1
+    }
     factors_train <- pca_model$x[, 1:num_factors, drop = FALSE]
     dfm_model <- lm(smpl_in$target ~ ., data = as.data.frame(factors_train))
     # For forecasting, get factor scores from x_test
