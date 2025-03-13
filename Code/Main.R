@@ -82,8 +82,8 @@ data <- read_excel("Data/Data combined.xlsx")
 source("Code/Clean.R")         
 source("Code/Align.R")        
 source("Code/PreSelection.R")  
-source("Code/Regression.R")    
-source("Code/Tuning.R")
+#source("Code/Regression.R")    
+#source("Code/Tuning.R")
 source("Code/Seasonality.R") 
 
 
@@ -126,7 +126,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(0,1) # List of regressions techniques
+list_reg <- c(0,1,5) # List of regressions techniques
 # 0 = DFM
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
