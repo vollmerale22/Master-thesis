@@ -13,12 +13,10 @@ tune_RF_new <- function(x, y, n, initial_window, horizon, n_folds = 5, ntree = 3
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
-  if(total_splits < n_folds) {
-    n_folds <- total_splits
-  }
+  if(total_splits < n_folds) n_folds <- total_splits
   splits <- sort(sample(1:total_splits, n_folds))
   
-  for (i in seq_len(nrow(grid))) {
+  res <- foreach(i = 1:nrow(grid), .combine = rbind, .packages = "randomForest") %dopar% {
     cv_errors <- numeric(n_folds)
     for (fold in seq_along(splits)) {
       train_end <- initial_window + splits[fold] - 1
@@ -38,12 +36,11 @@ tune_RF_new <- function(x, y, n, initial_window, horizon, n_folds = 5, ntree = 3
       preds <- predict(model, newdata = x_valid)
       cv_errors[fold] <- sqrt(mean((preds - y_valid)^2))
     }
-    grid$RMSE[i] <- mean(cv_errors)
-    if (i %% 10 == 0) cat("Completed", i, "of", nrow(grid), "grid combinations\n")
+    data.frame(index = i, RMSE = mean(cv_errors))
   }
-  
+  grid$RMSE <- res$RMSE
   best <- grid[which.min(grid$RMSE), ]
-  message("Best RF parameters using rolling origin CV:")
+  message("Best RF parameters using parallel rolling origin CV:")
   print(best)
   return(best)
 }
@@ -56,14 +53,13 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   print("Tuning XGBoost tree with rolling CV")
   set.seed(seed)
   
-  # Define full grid ranges
+  # Reduced grid example – adjust as needed
   nrounds_options <- seq(10, 100, by = 30)
   eta_options <- c(0.05, 0.1, 0.2, 0.3)
   max_depth_options <- c(3, 5, 6, 7, 9)
   min_child_weight_options <- 1:4
   gamma_options <- c(0, 0.1, 0.3, 0.5)
   
-  # Create full grid and sample a subset of combinations
   full_grid <- expand.grid(nrounds = nrounds_options,
                            eta = eta_options,
                            max_depth = max_depth_options,
@@ -74,21 +70,17 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
-  if (total_splits < n_folds) {
-    n_folds <- total_splits
-  }
+  if(total_splits < n_folds) n_folds <- total_splits
   splits <- sort(sample(1:total_splits, n_folds))
   
-  for (i in seq_len(nrow(sampled_grid))) {
+  res <- foreach(i = 1:nrow(sampled_grid), .combine = rbind, .packages = "xgboost") %dopar% {
     cv_errors <- numeric(n_folds)
     for (fold in seq_along(splits)) {
       train_end <- initial_window + splits[fold] - 1
       train_indices <- 1:train_end
       valid_indices <- (train_end + 1):(train_end + horizon)
       
-      if (max(valid_indices) > n_total) {
-        next
-      }
+      if(max(valid_indices) > n_total) next
       
       x_train <- x[train_indices, , drop = FALSE]
       y_train <- y[train_indices]
@@ -96,7 +88,6 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
       y_valid <- y[valid_indices]
       
       dtrain <- xgb.DMatrix(data = x_train, label = y_train)
-      
       set.seed(seed + splits[fold])
       model <- xgboost(
         data = dtrain,
@@ -107,20 +98,17 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
         gamma = sampled_grid$gamma[i],
         objective = "reg:squarederror",
         verbose = 0,
-        nthread = 1  # Force single-threaded execution
+        nthread = 1
       )
-      
       preds <- predict(model, newdata = x_valid)
       cv_errors[fold] <- sqrt(mean((preds - y_valid)^2))
     }
-    sampled_grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
-    if (i %% 10 == 0) {
-      cat("Completed", i, "of", nrow(sampled_grid), "grid combinations\n")
-    }
+    data.frame(index = i, RMSE = mean(cv_errors, na.rm = TRUE))
   }
   
+  sampled_grid$RMSE <- res$RMSE
   best <- sampled_grid[which.min(sampled_grid$RMSE), ]
-  message("Best XGBoost Tree parameters using random search and rolling origin CV:\n")
+  message("Best XGBoost Tree parameters using parallel random search and rolling origin CV:")
   print(best)
   return(best)
 }
@@ -128,37 +116,32 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
 
 # =======================================================================================================================================
 # XG Boost - linear
-tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, n_iter = 70) {
+tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, n_iter = 50) {
   cat("Tuning linear gradient boosting (gblinear) with rolling window CV\n")
   set.seed(seed)
   
-  # Define full grid for hyperparameters: nrounds, eta, and alpha (L1 regularization)
   full_grid <- expand.grid(
-    nrounds = seq(10, 130, by = 30),
-    eta = c(0.05, 0.1, 0.2, 0.3),
-    alpha = c(0.001, 0.01, 0.1, 0.2, 0.3)
+    nrounds = c(40,70,100),
+    eta = c(0.1, 0.2, 0.3),
+    alpha = c(0.001, 0.01, 0.1)
   )
-  # Sample a subset of grid combinations
-  sampled_grid <- full_grid[sample(nrow(full_grid), n_iter), ]
+  n_iter_actual <- min(n_iter, nrow(full_grid))
+  sampled_grid <- full_grid[sample(nrow(full_grid), n_iter_actual), ]
   sampled_grid$RMSE <- NA_real_
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
-  if (total_splits < n_folds) {
-    n_folds <- total_splits
-  }
+  if(total_splits < n_folds) n_folds <- total_splits
   splits <- sort(sample(1:total_splits, n_folds))
   
-  for (i in seq_len(nrow(sampled_grid))) {
+  res <- foreach(i = 1:nrow(sampled_grid), .combine = rbind, .packages = "xgboost") %dopar% {
     cv_errors <- numeric(n_folds)
-    
     for (fold in seq_along(splits)) {
-      
       train_end <- initial_window + splits[fold] - 1
       train_indices <- 1:train_end
       valid_indices <- (train_end + 1):(train_end + horizon)
       
-      if (max(valid_indices) > n_total) next
+      if(max(valid_indices) > n_total) next
       
       x_train <- x[train_indices, , drop = FALSE]
       y_train <- y[train_indices]
@@ -166,7 +149,6 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
       y_valid <- y[valid_indices]
       
       dtrain <- xgb.DMatrix(data = x_train, label = y_train)
-      
       set.seed(seed + splits[fold])
       model <- xgb.train(
         data = dtrain,
@@ -177,24 +159,17 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
         objective = "reg:squarederror",
         verbose = 0
       )
-      
       preds <- predict(model, newdata = x_valid)
-      rmse <- sqrt(mean((preds - y_valid)^2))
-      cv_errors[fold] <- rmse
-      
+      cv_errors[fold] <- sqrt(mean((preds - y_valid)^2))
     }
-    sampled_grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
-    if (i %% 10 == 0) {
-      cat("Completed", i, "of", nrow(sampled_grid), "grid combinations\n")
-    }
+    data.frame(index = i, RMSE = mean(cv_errors, na.rm = TRUE))
   }
-  
+  sampled_grid$RMSE <- res$RMSE
   best <- sampled_grid[which.min(sampled_grid$RMSE), ]
-  message("Best XGBoost Linear parameters using random search and rolling origin CV:\n")
+  message("Best XGBoost Linear parameters using parallel random search and rolling origin CV:")
   print(best)
   return(best)
 }
-
 
 # =======================================================================================================================================
 # Macroeconomic Random Forest
@@ -539,3 +514,5 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
   print(best)
   return(best)
 }
+
+
