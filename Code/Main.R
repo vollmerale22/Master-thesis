@@ -27,7 +27,7 @@ library(zoo)
 library(tseries)
 library(doBy)
 library(devtools)
-#install_github("philgoucou/macrorf", force = TRUE)
+install_github("philgoucou/macrorf", force = TRUE)
 library(MacroRF)
 library(tidyr)
 library(ggthemes)
@@ -42,13 +42,18 @@ library(stats)
 library(seasonal)
 library(lubridate)
 library(future.apply)
-library(forecast)
 library(reticulate)
 library(keras)
 install_keras()
 library(tensorflow)
+library(doParallel)
+library(foreach)
+library(parallel)
 
-
+num_cores <- detectCores() - 2  # Reserve a couple of cores for the system
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+cat("Parallel backend set up with", num_cores, "cores.\n")
 
 
 rm(list = ls())
@@ -94,16 +99,16 @@ source("Code/Regression new.R")
 # Adjust seasonality and standardise data 
 transformed_data <- data %>%
   adjust_seasonality_large()  # Apply seasonal adjustment
-  
+
 final_transformed_data <- transformed_data %>%
   mutate(across(where(is.numeric), ~ {
-  series <- .
-  # Check for stationarity
-  if (!is_stationary(series)) {
-    series <- c(NA, diff(series))  # Apply regular differencing
-  }
-  return(standardise(series))
-}))
+    series <- .
+    # Check for stationarity
+    if (!is_stationary(series)) {
+      series <- c(NA, diff(series))  # Apply regular differencing
+    }
+    return(standardise(series))
+  }))
 
 # Save the transformed data to a new Excel file
 output_file <- "Data/transformed_data_test.xlsx"  
@@ -126,7 +131,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(0,1,5) # List of regressions techniques
+list_reg <- c(0,1,2,3,4,5,6,7,8)  # List of regressions techniques
 # 0 = DFM
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
@@ -320,11 +325,11 @@ for (hh in 1:length(list_h)){
         
         # Run regressions
         temp_res <- run_regressions_new(smpl_in,
-                                    smpl_out,
-                                    list_reg,
-                                    n_sel,
-                                    sc_ml,
-                                    fast_MRF)
+                                        smpl_out,
+                                        list_reg,
+                                        n_sel,
+                                        sc_ml,
+                                        fast_MRF)
         
         # Write results  
         results[ii-n_start+1,2:length(results)] <- temp_res
@@ -337,7 +342,7 @@ for (hh in 1:length(list_h)){
         mutate(pred_mean = rowMeans(select(results,starts_with("pred_"))),
                date = as_date(as.Date(as.POSIXct(date*24*60*60, origin="1970-01-01"))),
                year = year(date))
-    
+      
       
       # Summarising and writing aggregate results
       err <- function(X,Y){sqrt(sum((X-Y)^2)/length(Y))}
@@ -385,6 +390,7 @@ for (hh in 1:length(list_h)){
     } # End of loop on number of variables
   } # End of loop on pre-selection method
 } # End of loop on horizon
+stopCluster(cl)
 
 # ----------------------------------------------------------------------------
 # STEP 4 - PERFORM TESTS
@@ -395,4 +401,6 @@ dm_results <- perform_dm_test(results, h = 1, loss = function(e) e^2,
                               harvey_correction = TRUE)
 print(dm_results)
 # Save results to CSV
-write.csv(dm_results, file = "./2-Output/dm_test_results.csv", row.names = FALSE)
+write.csv(dm_results, file = paste0("./Output/",paste0("DM Tests"), "dm_test_results_", target_variable, ".csv"))
+
+
