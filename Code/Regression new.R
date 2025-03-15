@@ -132,7 +132,7 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
   
   # Quantile regression
   if (3 %in% list_methods) {
-    print("Forecasting with quantile regression")
+    print("Forecasting with Quantile Regression")
     eq_qr_allf <- rq(target ~ .,
                      data = select(smpl_in, target, 5:ncol(smpl_in)),
                      na.action = "na.omit")
@@ -153,7 +153,7 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
                      n_folds = 5, 
                      ntree = 300, 
                      seed = 1234)
-    print("Forecasting with random forest")
+    print("Forecasting with Random Forest")
     eq_rf <- randomForest(y = y_train_ml,
                           x = x_train_ml,
                           na.action = "na.omit",
