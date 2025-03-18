@@ -219,7 +219,7 @@ tune_MRF <- function(data.in,n){
       
       # Set seed for reproducibility
       # NB: has to be the same as in Main.R
-      set.seed(22122) 
+      set.seed(1234) 
       
       # Fit model on train
       eq_mrf <- MRF(data.tr,
