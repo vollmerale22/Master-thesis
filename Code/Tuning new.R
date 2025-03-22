@@ -1,20 +1,22 @@
 # =======================================================================================================================================
 # Random Forest
 
-tune_RF_new <- function(x, y, n, initial_window, horizon, n_folds = 5, ntree = 300, seed = 1234) {
+tune_RF_new <- function(x, y, n, initial_window, horizon, n_folds = 5, seed = 1234) {
   cat("Tuning Random Forest\n")
   set.seed(seed)
   
   grid <- expand.grid(
+    ntree = c(100, 200, 300, 500, 1000),
     mtry = seq(from = floor(ncol(x) / 3), to = ncol(x), length.out = 5),
-    nodesize = seq(from = 3, to = 12, by = 3)
+    nodesize = seq(from = 3, to = 12, by = 3),
+    maxnodes = c(5, 10, 15, 20)
   )
   grid$RMSE <- NA_real_
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
   if(total_splits < n_folds) n_folds <- total_splits
-  splits <- sort(sample(1:total_splits, n_folds))
+  splits <- floor(seq(1, total_splits, length.out = n_folds))
   
   res <- foreach(i = 1:nrow(grid), .combine = rbind, .packages = "randomForest") %dopar% {
     cv_errors <- numeric(n_folds)
@@ -32,7 +34,8 @@ tune_RF_new <- function(x, y, n, initial_window, horizon, n_folds = 5, ntree = 3
       model <- randomForest(x = x_train, y = y_train,
                             mtry = grid$mtry[i],
                             nodesize = grid$nodesize[i],
-                            ntree = ntree)
+                            ntree = grid$ntree[i],
+                            maxnodes = grid$maxnodes[i])
       preds <- predict(model, newdata = x_valid)
       cv_errors[fold] <- sqrt(mean((preds - y_valid)^2))
     }
@@ -71,7 +74,7 @@ tune_XGBT_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
   if(total_splits < n_folds) n_folds <- total_splits
-  splits <- sort(sample(1:total_splits, n_folds))
+  splits <- floor(seq(1, total_splits, length.out = n_folds))
   
   res <- foreach(i = 1:nrow(sampled_grid), .combine = rbind, .packages = "xgboost") %dopar% {
     cv_errors <- numeric(n_folds)
@@ -132,7 +135,7 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
   if(total_splits < n_folds) n_folds <- total_splits
-  splits <- sort(sample(1:total_splits, n_folds))
+  splits <- floor(seq(1, total_splits, length.out = n_folds))
   
   res <- foreach(i = 1:nrow(sampled_grid), .combine = rbind, .packages = "xgboost") %dopar% {
     cv_errors <- numeric(n_folds)
@@ -431,22 +434,21 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
   
   # Define a grid of hyperparameters to search over.
   grid <- expand.grid(
-    units = 50,
+    units = c(50, 75, 100),
     dropout = 0.3,
     recurrent_dropout = 0.2,
     epochs = 30,
     batch_size = 32
   )
-  grid$RMSE <- NA
+  grid$RMSE <- NA_real_
   
   n_total <- nrow(x)
   total_splits <- n_total - initial_window - horizon + 1
   if(total_splits < n_folds) n_folds <- total_splits
   
-  # Select a set of rolling CV splits (here we sample indices from available splits)
+  # Select a set of rolling CV splits.
   splits <- sort(sample(1:total_splits, n_folds))
   
-  # Loop over each hyperparameter combination in the grid.
   for (i in 1:nrow(grid)) {
     cv_errors <- c()
     
@@ -463,21 +465,25 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       y_valid <- y[valid_indices]
       
       # Reshape predictors to 3D arrays: [samples, timesteps, features]
+      # Here, timesteps = 1.
       x_train_reshaped <- array(x_train, dim = c(nrow(x_train), 1, ncol(x_train)))
       x_valid_reshaped <- array(x_valid, dim = c(nrow(x_valid), 1, ncol(x_valid)))
       
-      # Build the LSTM model using the current grid hyperparameters.
+      # Build the LSTM model with one layer.
       model <- keras_model_sequential() %>%
-        layer_lstm(units = grid$units[i],
-                   input_shape = c(1, ncol(x_train)),
-                   dropout = grid$dropout[i],
-                   recurrent_dropout = grid$recurrent_dropout[i]) %>%
+        layer_lstm(
+          units = grid$units[i],
+          input_shape = c(1, ncol(x_train)),
+          dropout = grid$dropout[i],
+          recurrent_dropout = grid$recurrent_dropout[i]
+        ) %>%
         layer_dense(units = 1)
       
       model %>% compile(
         loss = "mean_squared_error",
         optimizer = "adam"
       )
+      
       # Use callbacks for early stopping and learning rate reduction.
       early_stop <- callback_early_stopping(monitor = "val_loss", patience = 5)
       lr_reduce <- callback_reduce_lr_on_plateau(monitor = "val_loss", factor = 0.5, patience = 3)
@@ -498,14 +504,15 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       preds <- as.numeric(preds)
       rmse <- sqrt(mean((preds - y_valid)^2))
       cv_errors <- c(cv_errors, rmse)
-      # ----- CLEANUP -----
+      
+      # Cleanup.
       rm(model, history, preds, x_train_reshaped, x_valid_reshaped)
       keras::k_clear_session()
       gc()
     }
     
     # Store the average RMSE for this hyperparameter combination.
-    grid$RMSE[i] <- mean(cv_errors)
+    grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
   }
   
   # Select and return the best hyperparameters (lowest RMSE).
@@ -514,5 +521,3 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
   print(best)
   return(best)
 }
-
-
