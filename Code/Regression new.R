@@ -1,4 +1,4 @@
-run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, fast_MRF) {
+run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods, n_sel, sc_ml, fast_MRF) {
   
   # Inputs:
   # smpl_in: in-sample data [data.frame]
@@ -42,41 +42,66 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
     x_all_ml <- x_all
   }
   
-  # AR model (using lag 2 target)
-  eq_ar <- lm(target ~ ., 
-              data = select(smpl_in, target, L1st_target, L2nd_target), # with two lags
-              na.action = "na.omit")
-  results[1, 2] <- predict(eq_ar,
-                           newdata = as.data.frame(select(smpl_out, L1st_target, L2nd_target)),
-                           na.action = "na.omit")
-
-
+  # AR model 
+  max_lag <- 2
   
-  # ARIMA
-  #arima_model <- auto.arima(smpl_in$target)
-  #arima_forecast <- forecast(arima_model, h = 1)$mean[1]
-  #results[1, 3] <- arima_forecast
+  # Initialize vectors to store models and their AIC values
+  models <- vector("list", max_lag)
+  bic_values <- numeric(max_lag)
+  
+  # Loop over possible lag lengths
+  for (lag in 1:max_lag) {
+    if (lag == 1) {
+      data_model <- select(smpl_in, target, L1st_target)
+      new_data <- as.data.frame(select(smpl_out, L1st_target))
+    } else if (lag == 2) {
+      data_model <- select(smpl_in, target, L1st_target, L2nd_target)
+      new_data <- as.data.frame(select(smpl_out, L1st_target, L2nd_target))
+    }
+    
+    # Fit the AR model with the specified number of lags
+    model_temp <- lm(target ~ ., data = data_model, na.action = "na.omit")
+    models[[lag]] <- model_temp
+    bic_values[lag] <- BIC(model_temp)
+  }
+  
+  # Select the model with the lowest AIC
+  best_lag <- which.min(bic_values)
+  best_model <- models[[best_lag]]
+  
+  # Use the selected model for prediction
+  results[1, 2] <- predict(best_model,
+                           newdata = new_data,
+                           na.action = "na.omit")
+  
   
   count_col <- 3  # starting column for ML methods
   
-  #DFM 
-  if(0 %in% list_methods){
+  
+  #DFM
+  if (0 %in% list_methods) {
     print("Forecasting with DFM")
-    pca_model <- prcomp(x_train, scale. = TRUE)
-    eigenvalues <- pca_model$sdev^2
-    num_factors <- sum(eigenvalues > 1)
-    if (num_factors < 1) {
-      num_factors <- 1
-    }
-    factors_train <- pca_model$x[, 1:num_factors, drop = FALSE]
-    dfm_model <- lm(smpl_in$target ~ ., data = as.data.frame(factors_train))
-    # For forecasting, get factor scores from x_test
-    factors_test <- predict(pca_model, newdata = x_test)[, 1:num_factors, drop = FALSE]
-    dfm_forecast <- predict(dfm_model, newdata = as.data.frame(factors_test))
-    results[1, count_col] <- dfm_forecast
-    names_col <- c(names_col, "pred_dfm")
+    dfm_data <- cbind(lhs_sel,x_pca) %>% select(-date) %>% drop_na()
+  
+    ic_out <- ICr(dfm_data, max.r = 5) # Bai-Ng criterion for factors
+    r_selected <- which.min(ic_out$IC[,1])
+    cat("Selected number of factors r =", r_selected, "using the Bai–Ng criterion.\n")
+    
+    var_sel <- vars::VARselect(dfm_data, lag.max = 5, type = "const") # Select the lag order for the VAR model
+    p_optimal <- as.numeric(var_sel$selection["SC(n)"])
+    # Estimate the final DFM with the chosen r and p.
+    dfm_model <- DFM(X = dfm_data, r = r_selected, p = p_optimal, em.method = "none")
+    
+    # Forecast the target variable h steps ahead.
+    # (Assume that predict() from dfms returns a forecast for the common factors and/or directly for the target.)
+    dfm_pred <- predict(dfm_model, h = 1)
+    
+    results[1, count_col] <- dfm_pred$X_fcst[1, "target"]
     count_col <- count_col + 1
+    names_col <- c(names_col, "pred_dfm")
   }
+  
+  
   
   # OLS
   if (1 %in% list_methods) {
@@ -151,16 +176,16 @@ run_regressions_new <- function(smpl_in, smpl_out, list_methods, n_sel, sc_ml, f
                      initial_window = n_per, 
                      horizon = 12, 
                      n_folds = 5, 
-                     ntree = 300, 
                      seed = 1234)
     print("Forecasting with Random Forest")
     eq_rf <- randomForest(y = y_train_ml,
                           x = x_train_ml,
                           na.action = "na.omit",
                           do.trace = FALSE,
-                          ntree = 300,
+                          ntree = param$ntree,
                           mtry = param$mtry,
                           nodesize = param$nodesize,
+                          maxnodes = param$maxnodes,
                           corr.bias = TRUE)
     results[1, count_col] <- predict(eq_rf,
                                      newdata = x_test_ml,
