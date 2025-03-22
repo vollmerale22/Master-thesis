@@ -29,7 +29,7 @@ library(zoo)
 library(tseries)
 library(doBy)
 library(devtools)
-install_github("philgoucou/macrorf", force = TRUE)
+#install_github("philgoucou/macrorf", force = TRUE)
 library(MacroRF)
 library(tidyr)
 library(ggthemes)
@@ -45,11 +45,12 @@ library(seasonal)
 library(lubridate)
 library(future.apply)
 library(keras)
-#install_keras()
+install_keras()
 library(tensorflow)
 library(doParallel)
 library(foreach)
 library(parallel)
+library(dfms)
 
 num_cores <- detectCores() - 2  # Reserve a couple of cores for the system
 cl <- makeCluster(num_cores)
@@ -112,6 +113,7 @@ final_transformed_data <- transformed_data %>%
   }))
 
 # Save the transformed data to a new Excel file
+output_file <- final_transformed_data
 output_file <- "Data/transformed_data_test.xlsx"  
 write_xlsx(final_transformed_data, output_file)
 
@@ -132,7 +134,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(0,1,2,3,4,5,6,7,8)  # List of regressions techniques
+list_reg <- c(0)  # List of regressions techniques
 # 0 = DFM
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
@@ -303,11 +305,11 @@ for (hh in 1:length(list_h)){
         }
         
         # Cleaning
-        rm(rhs_sel)
-        rm(end_date)
-        rm(start_date)
-        rm(lhs_sel)
-        rm(x_pca)
+        #rm(rhs_sel)
+        #rm(end_date)
+        #rm(start_date)
+        #rm(lhs_sel)
+        #rm(x_pca)
         
         
         # --------------------------------------------------------------------
@@ -325,7 +327,9 @@ for (hh in 1:length(list_h)){
         results[ii-n_start+1,1] <- date_ii
         
         # Run regressions
-        temp_res <- run_regressions_new(smpl_in,
+        temp_res <- run_regressions_new(lhs_sel, 
+                                        x_pca,
+                                        smpl_in,
                                         smpl_out,
                                         list_reg,
                                         n_sel,
