@@ -91,9 +91,7 @@ source("Code/Align.R")
 source("Code/PreSelection.R")  
 #source("Code/Regression.R")    
 #source("Code/Tuning.R")
-source("Code/Seasonality.R") 
-
-
+source("Code/Seasonality.R")
 source("Code/Tuning new.R")
 source("Code/Regression new.R")
 
@@ -118,7 +116,7 @@ output_file <- "Data/transformed_data_test.xlsx"
 write_xlsx(final_transformed_data, output_file)
 
 # ----------------------------------------------------------------------------
-# STEP 0 - SET USER PARAMETERS FOR THE HORSERACE
+# STEP 0
 # ----------------------------------------------------------------------------
 target_variable <- "EU exports"
 name_input <- output_file  # Name of the input file
@@ -134,8 +132,10 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(0)  # List of regressions techniques
-# 0 = DFM
+list_reg <- c(8)  # List of regressions techniques
+#-2 DFM on whole data
+#-1 = DFM on pre-selected variables
+# 0 = DFM double PCA
 # 1 = OLS
 # 2 = Markov-switching regression [requires 1]
 # 3 = Quantile regression
@@ -274,7 +274,7 @@ for (hh in 1:length(list_h)){
           x_pca %<>% select(-date)
           
           res_pca <- PCA(X = x_pca,
-                         scale = TRUE,
+                         scale = FALSE,
                          graph = FALSE,
                          ncp = length(x_pca))
           
@@ -291,7 +291,6 @@ for (hh in 1:length(list_h)){
           don_cb <- cbind(lhs_sel, rhs_fct_sel)
           
           # Cleaning
-          #rm(eig_val)
           rm(res_pca)
           rm(rhs_fct)
           rm(rhs_fct_sel)
@@ -323,16 +322,16 @@ for (hh in 1:length(list_h)){
         
         # Define datasets in- and out-of-sample
         smpl_in <- head(don_reg,n_date_ii-horizon-3)
-        smpl_out <- dplyr::slice(don_reg,n_date_ii)
+        smpl_out <- as.data.frame(dplyr::slice(don_reg,n_date_ii), drop=FALSE)
         results[ii-n_start+1,1] <- date_ii
-        
         # Run regressions
-        temp_res <- run_regressions_new(lhs_sel, 
+        temp_res <- run_regressions_new(data_all,
+                                        don_cb,
+                                        lhs_sel, 
                                         x_pca,
                                         smpl_in,
                                         smpl_out,
                                         list_reg,
-                                        n_sel,
                                         sc_ml,
                                         fast_MRF)
         
@@ -401,11 +400,120 @@ stopCluster(cl)
 # STEP 4 - PERFORM TESTS
 # ----------------------------------------------------------------------------
 source("Code/Dm test.R")
-dm_results <- perform_dm_test(results, h = 1, loss = function(e) e^2,
-                              one_sided = TRUE, 
-                              harvey_correction = TRUE)
-print(dm_results)
+benchmark_AR <- "ar"                  # AR benchmark column 
+benchmark_DFM <- "pred_dfm_after_pre"   # DFM benchmark column
+# --- Run the DM tests for both benchmarks using the 'results' object:
+dm_results_AR <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = FALSE, 
+                                 harvey_correction = FALSE, benchmark_column = benchmark_AR)
+dm_results_DFM <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = FALSE, 
+                                  harvey_correction = FALSE, benchmark_column = benchmark_DFM)
+
 # Save results to CSV
 write.csv(dm_results, file = paste0("./Output/",paste0("DM Tests"), "dm_test_results_", target_variable, ".csv"))
+
+
+
+# ----------------------------------------------------------------------------
+# STEP 5 - CREATE FINAL TABLE
+# ----------------------------------------------------------------------------
+
+display_names <- c("ar" = "AR",
+                   "pred_dfm_after_pre" = "DFM",
+                   "pred_ols" = "OLS",
+                   "pred_qr" = "QR",
+                   "pred_ms" = "MS",
+                   "pred_rf" = "RF",
+                   "pred_mrf" = "MRF",
+                   "pred_xgbt" = "XGBoost (Tree)",
+                   "pred_xgbl" = "XGBoostL (Linear)",
+                   "pred_lstm_custom" = "LSTM")
+
+#--- Define the desired order and grouping ---
+stat_models_keys <- c("ar", "pred_dfm_after_pre", "pred_ols", "pred_qr", "pred_ms")
+ml_models_keys <- c("pred_rf", "pred_mrf", "pred_xgbt", "pred_xgbl", "pred_lstm_custom")
+ordered_keys <- c(stat_models_keys, ml_models_keys)
+
+#--- Build the final summary table ---
+final_table <- data.frame(Model = character(),
+                          RMSE_Total = numeric(),
+                          RMSE_Crisis = numeric(),
+                          RMSE_Normal = numeric(),
+                          Benchmark_AR = character(),
+                          Benchmark_DFM = character(),
+                          stringsAsFactors = FALSE)
+
+# For benchmarks, extract RMSE from summary_all
+rmse_AR_total <- summary_all["ar", "total"]
+rmse_DFM_total <- summary_all["pred_dfm_after_pre", "total"]
+
+for (key in ordered_keys) {
+  # Get display name for current model
+  model_disp <- display_names[key]
+  
+  # Extract RMSE values from summary_all 
+  rmse_model_total <- summary_all[key, "total"]
+  rmse_model_crisis <- summary_all[key, "crisis"]
+  rmse_model_normal <- summary_all[key, "normal"]
+  
+  # For benchmarks AR and DFM, no DM test is applied
+  if (key == "ar") {
+    bench_AR <- "--"
+    # For AR row, you might display the relative improvement versus DFM
+    bench_DFM <- paste0(round((rmse_DFM_total - rmse_AR_total) / rmse_DFM_total * 100, 1), "%")
+  } else if (key == "pred_dfm_after_pre") {
+    bench_AR <- paste0(round((rmse_AR_total - rmse_DFM_total) / rmse_AR_total * 100, 1), "%")
+    bench_DFM <- "--"
+  } else {
+    # Relative improvement vs. AR benchmark:
+    improvement_AR <- (rmse_AR_total - rmse_model_total) / rmse_AR_total * 100
+    p_val_AR <- dm_results_AR[[key]]$p_value
+    stars_AR <- ifelse(p_val_AR < 0.01, "**", ifelse(p_val_AR < 0.05, "*", ""))
+    bench_AR <- paste0(round(improvement_AR, 1), "%", stars_AR)
+    
+    # Relative improvement vs. DFM benchmark:
+    improvement_DFM <- (rmse_DFM_total - rmse_model_total) / rmse_DFM_total * 100
+    p_val_DFM <- dm_results_DFM[[key]]$p_value
+    stars_DFM <- ifelse(p_val_DFM < 0.01, "**", ifelse(p_val_DFM < 0.05, "*", ""))
+    bench_DFM <- paste0(round(improvement_DFM, 1), "%", stars_DFM)
+  }
+  
+  final_table <- rbind(final_table,
+                       data.frame(Model = model_disp,
+                                  RMSE_Total = rmse_model_total,
+                                  RMSE_Crisis = rmse_model_crisis,
+                                  RMSE_Normal = rmse_model_normal,
+                                  Benchmark_AR = bench_AR,
+                                  Benchmark_DFM = bench_DFM,
+                                  stringsAsFactors = FALSE))
+}
+
+# --- Create xtable with dynamic caption and label ---
+xt <- xtable(final_table, 
+             caption = paste("Results Overview", target_variable),
+             label = paste0("tab:", gsub(" ", "_", tolower(target_variable))))
+
+# --- Insert custom header rows for grouping ---
+addtorow <- list()
+addtorow$pos <- list()
+addtorow$text <- c()
+
+# Before first row, add a header for Statistical models
+addtorow$pos[[1]] <- -1
+addtorow$text[1] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{Statistical models}} \\\\\n\\hline\n"
+
+# Find the position where ML models start (after stat_models_keys count)
+stat_count <- length(stat_models_keys)
+addtorow$pos[[2]] <- stat_count - 1  # insert after the last stat model row
+addtorow$text[2] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{ML Models}} \\\\\n\\hline\n"
+
+# --- Print the table with xtable ---
+print(xt, 
+      add.to.row = addtorow, 
+      include.colnames = TRUE, 
+      include.rownames = FALSE,
+      floating = TRUE, 
+      caption.placement = "top",
+      sanitize.text.function = identity)
+
 
 
