@@ -428,17 +428,18 @@ tune_MRF_fast <- function(data.in,n){
 # =======================================================================================================================================
 # LSTM
 
-tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
+tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, lag = 2) {
   print("Tuning LSTM")
   set.seed(seed)
   
   # Define a grid of hyperparameters to search over.
+  # Here we vary only the number of hidden units in each LSTM layer over the values 10, 20, and 40.
   grid <- expand.grid(
-    units = c(50, 75, 100),
+    units = c(10, 20, 40),
     dropout = 0.3,
     recurrent_dropout = 0.2,
-    epochs = 30,
-    batch_size = 32
+    epochs = 50,
+    batch_size = 30
   )
   grid$RMSE <- NA_real_
   
@@ -464,16 +465,36 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       x_valid <- x[valid_indices, , drop = FALSE]
       y_valid <- y[valid_indices]
       
-      # Reshape predictors to 3D arrays: [samples, timesteps, features]
-      # Here, timesteps = 1.
-      x_train_reshaped <- array(x_train, dim = c(nrow(x_train), 1, ncol(x_train)))
-      x_valid_reshaped <- array(x_valid, dim = c(nrow(x_valid), 1, ncol(x_valid)))
+      # Create training sequences: each sample has 'lag' time steps.
+      num_train <- nrow(x_train) - lag + 1
+      if(num_train < 1) next  # skip if not enough data
+      x_train_seq <- array(NA, dim = c(num_train, lag, ncol(x_train)))
+      for (j in 1:num_train) {
+        x_train_seq[j, , ] <- as.matrix(x_train[j:(j+lag-1), ])
+      }
+      # The label for each sequence is taken from the last row of the sequence.
+      y_train_seq <- y_train[lag:length(y_train)]
       
-      # Build the LSTM model with one layer.
+      # Create validation sequences similarly.
+      num_valid <- nrow(x_valid) - lag + 1
+      if(num_valid < 1) next
+      x_valid_seq <- array(NA, dim = c(num_valid, lag, ncol(x_valid)))
+      for (j in 1:num_valid) {
+        x_valid_seq[j, , ] <- as.matrix(x_valid[j:(j+lag-1), ])
+      }
+      y_valid_seq <- y_valid[lag:length(y_valid)]
+      
+      # Build the LSTM model with 2 LSTM layers.
       model <- keras_model_sequential() %>%
         layer_lstm(
           units = grid$units[i],
-          input_shape = c(1, ncol(x_train)),
+          input_shape = c(lag, ncol(x_train)),
+          dropout = grid$dropout[i],
+          recurrent_dropout = grid$recurrent_dropout[i],
+          return_sequences = TRUE
+        ) %>%
+        layer_lstm(
+          units = grid$units[i],
           dropout = grid$dropout[i],
           recurrent_dropout = grid$recurrent_dropout[i]
         ) %>%
@@ -481,41 +502,36 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234) {
       
       model %>% compile(
         loss = "mean_squared_error",
-        optimizer = "adam"
+        optimizer = optimizer_adam(lr = 0.001)
       )
       
-      # Use callbacks for early stopping and learning rate reduction.
+      # Callbacks for early stopping and reducing learning rate.
       early_stop <- callback_early_stopping(monitor = "val_loss", patience = 5)
       lr_reduce <- callback_reduce_lr_on_plateau(monitor = "val_loss", factor = 0.5, patience = 3)
       
-      # Fit the model on the training fold.
       history <- model %>% fit(
-        x = x_train_reshaped,
-        y = y_train,
+        x = x_train_seq,
+        y = y_train_seq,
         epochs = grid$epochs[i],
         batch_size = grid$batch_size[i],
         verbose = 0,
-        validation_data = list(x_valid_reshaped, y_valid),
+        validation_data = list(x_valid_seq, y_valid_seq),
         callbacks = list(early_stop, lr_reduce)
       )
       
-      # Predict on the validation fold.
-      preds <- model %>% predict(x_valid_reshaped)
+      preds <- model %>% predict(x_valid_seq)
       preds <- as.numeric(preds)
-      rmse <- sqrt(mean((preds - y_valid)^2))
+      rmse <- sqrt(mean((preds - y_valid_seq)^2))
       cv_errors <- c(cv_errors, rmse)
       
-      # Cleanup.
-      rm(model, history, preds, x_train_reshaped, x_valid_reshaped)
+      rm(model, history, preds, x_train_seq, x_valid_seq)
       keras::k_clear_session()
       gc()
     }
     
-    # Store the average RMSE for this hyperparameter combination.
     grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
   }
   
-  # Select and return the best hyperparameters (lowest RMSE).
   best <- grid[which.min(grid$RMSE), ]
   message("Best LSTM parameters using rolling CV:")
   print(best)

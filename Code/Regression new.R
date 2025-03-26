@@ -1,12 +1,5 @@
-run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods, n_sel, sc_ml, fast_MRF) {
-  
-  # Inputs:
-  # smpl_in: in-sample data [data.frame]
-  # smpl_out: out-of-sample data [data.frame]
-  # list_methods: vector of method IDs to run
-  # n_sel: number of variables kept after pre-selection (unused here)
-  # sc_ml: indicator whether to scale ML data (1 = yes)
-  # fast_MRF: 1 for fast tuning of MRF (only n_var tuned), 0 for full tuning
+run_regressions_new <- function(data_all,lhs_sel, x_pca, don_cb, smpl_in, smpl_out, list_methods, sc_ml, fast_MRF) {
+  #n_sel
   
   # Prepare results dataset: true value and predictions for each method (plus AR)
   results <- data.frame(matrix(NA,
@@ -77,15 +70,37 @@ run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods,
   
   count_col <- 3  # starting column for ML methods
   
+  if (-2 %in% list_methods) {
+    print("Forecasting with DFM whole data")
+    dfm_data1 <- data_all %>% select(-date) %>% drop_na()
+    
+    ic_out1 <- ICr(dfm_data1, max.r = 5) # Bai-Ng criterion for factors
+    r_selected1 <- which.min(ic_out1$IC[,1])
+    
+    var_sel1 <- vars::VARselect(dfm_data1, lag.max = 5, type = "const") # Select the lag order for the VAR model
+    p_optimal1 <- as.numeric(var_sel1$selection["SC(n)"])
+    # Estimate the final DFM with the chosen r and p.
+    dfm_model1 <- DFM(X = dfm_data1, r = r_selected1, p = p_optimal1, em.method = "none")
+    
+    # Forecast the target variable h steps ahead.
+    # (Assume that predict() from dfms returns a forecast for the common factors and/or directly for the target.)
+    dfm_pred1 <- predict(dfm_model1, h = 1)
+    
+    results[1, count_col] <- dfm_pred1$X_fcst[1, "target"]
+    count_col <- count_col + 1
+    names_col <- c(names_col, "pred_dfm_alldata")
+  }
   
-  #DFM
-  if (0 %in% list_methods) {
-    print("Forecasting with DFM")
-    dfm_data <- cbind(lhs_sel,x_pca) %>% select(-date) %>% drop_na()
-  
+  if (-1 %in% list_methods) {
+    print("Forecasting with DFM after preselection")
+    dfm_data <- cbind(lhs_sel, 
+                      select(x_pca, setdiff(colnames(x_pca), colnames(lhs_sel)))) %>% 
+      select(-date) %>% 
+      drop_na()
+    
+    
     ic_out <- ICr(dfm_data, max.r = 5) # Bai-Ng criterion for factors
     r_selected <- which.min(ic_out$IC[,1])
-    cat("Selected number of factors r =", r_selected, "using the Bai–Ng criterion.\n")
     
     var_sel <- vars::VARselect(dfm_data, lag.max = 5, type = "const") # Select the lag order for the VAR model
     p_optimal <- as.numeric(var_sel$selection["SC(n)"])
@@ -98,7 +113,29 @@ run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods,
     
     results[1, count_col] <- dfm_pred$X_fcst[1, "target"]
     count_col <- count_col + 1
-    names_col <- c(names_col, "pred_dfm")
+    names_col <- c(names_col, "pred_dfm_after_pre")
+  }
+  
+  #DFM
+  if (0 %in% list_methods) {
+    print("Forecasting with DFM double pca")
+    dfm_data3 <- don_reg %>%drop_na() %>% select(-date)
+  
+    ic_out3 <- ICr(dfm_data3, max.r = 5) # Bai-Ng criterion for factors
+    r_selected3 <- which.min(ic_out3$IC[,1])
+
+    var_sel3 <- vars::VARselect(dfm_data3, lag.max = 5, type = "const") # Select the lag order for the VAR model
+    p_optimal3 <- as.numeric(var_sel3$selection["SC(n)"])
+    # Estimate the final DFM with the chosen r and p.
+    dfm_model3 <- DFM(X = dfm_data3, r = r_selected3, p = p_optimal3, em.method = "none")
+    
+    # Forecast the target variable h steps ahead.
+    # (Assume that predict() from dfms returns a forecast for the common factors and/or directly for the target.)
+    dfm_pred3 <- predict(dfm_model3, h = 1)
+    
+    results[1, count_col] <- dfm_pred3$X_fcst[1, "target"]
+    count_col <- count_col + 1
+    names_col <- c(names_col, "pred_dfm_doublepca")
   }
   
   
@@ -309,39 +346,60 @@ run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods,
   # LSTM Nowcasting
   if (8 %in% list_methods) {
     set.seed(1234)
+    lag <- 2
     
-    # Tune LSTM using the new tuning function (rolling CV grid search)
+    # Tune LSTM with a 2-lag structure.
     param <- tune_LSTM(x_train_ml, y_train_ml, 
                        initial_window = n_per, 
                        horizon = 12, 
                        n_folds = 5, 
-                       seed = 1234)
+                       seed = 1234, 
+                       lag = lag)
     print("Forecasting with LSTM")
     
-    # Reshape the training and test predictors to 3D arrays:
-    x_train_reshaped <- array(x_train_ml, dim = c(nrow(x_train_ml), 1, ncol(x_train_ml)))
-    x_test_reshaped <- array(x_test_ml, dim = c(1, 1, ncol(x_test_ml)))
+    # Create training sequences for the final model.
+    num_train <- nrow(x_train_ml) - lag + 1
+    x_train_seq <- array(NA, dim = c(num_train, lag, ncol(x_train_ml)))
+    for (j in 1:num_train) {
+      x_train_seq[j, , ] <- as.matrix(x_train_ml[j:(j+lag-1), ])
+    }
+    y_train_seq <- y_train_ml[lag:length(y_train_ml)]
     
-    # Build the final LSTM model using the best hyperparameters.
-    model <- keras::keras_model_sequential() %>%
-      keras::layer_lstm(units = param$units, 
-                        input_shape = c(1, ncol(x_train_ml)), 
-                        dropout = param$dropout,
-                        recurrent_dropout = param$recurrent_dropout) %>%
-      keras::layer_dense(units = 1)
+    # For the test sample, we need a sequence of length 'lag'.
+    # Assuming x_test_ml is a single new observation, combine it with the last (lag - 1) rows of x_train_ml.
+    x_test_seq <- array(NA, dim = c(1, lag, ncol(x_test_ml)))
+    if (lag > 1) {
+      x_test_seq[1, 1:(lag-1), ] <- as.matrix(x_train_ml[(nrow(x_train_ml) - lag + 2):nrow(x_train_ml), ])
+    }
+    x_test_seq[1, lag, ] <- as.matrix(x_test_ml)
     
-    model %>% keras::compile(
+    # Build the final LSTM model.
+    model <- keras_model_sequential() %>%
+      layer_lstm(
+        units = param$units,
+        input_shape = c(lag, ncol(x_train_ml)),
+        dropout = param$dropout,
+        recurrent_dropout = param$recurrent_dropout,
+        return_sequences = TRUE
+      ) %>%
+      layer_lstm(
+        units = param$units,
+        dropout = param$dropout,
+        recurrent_dropout = param$recurrent_dropout
+      ) %>%
+      layer_dense(units = 1)
+    
+    model %>% compile(
       loss = "mean_squared_error",
-      optimizer = "adam"
+      optimizer = optimizer_adam(lr = 0.001)
     )
-    # Use callbacks in the final training.
+    
     early_stop <- callback_early_stopping(monitor = "val_loss", patience = 5)
     lr_reduce <- callback_reduce_lr_on_plateau(monitor = "val_loss", factor = 0.5, patience = 3)
     
-    # Fit the model on the entire training sample.
-    history <- model %>% keras::fit(
-      x = x_train_reshaped,
-      y = y_train_ml,
+    history <- model %>% fit(
+      x = x_train_seq,
+      y = y_train_seq,
       epochs = param$epochs,
       batch_size = param$batch_size,
       verbose = 1,
@@ -349,19 +407,18 @@ run_regressions_new <- function(lhs_sel, x_pca, smpl_in, smpl_out, list_methods,
       callbacks = list(early_stop, lr_reduce)
     )
     
-    # Predict for the test sample.
-    pred <- predict(model,x_test_reshaped)
+    pred <- model %>% predict(x_test_seq)
     pred <- as.numeric(pred)
     
     if (sc_ml == 1) {
-      pred <- pred * sd(y_train) + mean(y_train)
+      pred <- pred * sd(y_train_ml) + mean(y_train_ml)
     }
     
     results[1, count_col] <- pred
     count_col <- count_col + 1
     names_col <- c(names_col, "pred_lstm_custom")
-    # ----- CLEANUP -----
-    rm(model, history, x_train_reshaped, x_test_reshaped, pred)
+    
+    rm(model, history, x_train_seq, x_test_seq, pred)
     keras::k_clear_session()
     gc()
   }
