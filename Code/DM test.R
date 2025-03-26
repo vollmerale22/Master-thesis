@@ -2,21 +2,11 @@ perform_dm_test <- function(results,
                             h = 1, 
                             loss = function(e) e^2, 
                             one_sided = FALSE, 
-                            harvey_correction = FALSE) {
+                            harvey_correction = FALSE,
+                            benchmark_column) {
   # 1) Identify the actual (true) values
-  if (!("true_value" %in% names(results))) {
-    stop("No 'true_value' column found in 'results'!")
-  }
   actual <- results[["true_value"]]
-  if (!is.numeric(actual)) {
-    stop("'true_value' must be numeric!")
-  }
-  
-  # 2) Identify the benchmark forecast (e.g. 'pred_ols')
-  if (!("pred_ols" %in% names(results))) {
-    stop("No benchmark forecast column 'pred_ols' found in 'results'!")
-  }
-  benchmark <- results[["pred_ols"]]
+  benchmark <- results[[benchmark_column]]
   
   # 3) Internal DM test function comparing two forecasts
   dm_test <- function(actual, f1, f2, h = 1, loss = function(e) e^2, 
@@ -53,7 +43,7 @@ perform_dm_test <- function(results,
   }
   
   # 4) Identify all forecast columns (exclude known columns)
-  forecast_names <- setdiff(names(results), c("date", "year", "true_value", "pred_ols"))
+  forecast_names <- setdiff(names(results), c("date", "year", "true_value", benchmark_column))
   
   # 5) Compare each forecast to the benchmark
   dm_results <- list()
