@@ -352,7 +352,7 @@ run_regressions_new <- function(data_all,lhs_sel, x_pca, don_cb, smpl_in, smpl_o
     param <- tune_LSTM(x_train_ml, y_train_ml, 
                        initial_window = n_per, 
                        horizon = 12, 
-                       n_folds = 5, 
+                       n_folds = 3, 
                        seed = 1234, 
                        lag = lag)
     print("Forecasting with LSTM")
@@ -421,6 +421,7 @@ run_regressions_new <- function(data_all,lhs_sel, x_pca, don_cb, smpl_in, smpl_o
     rm(model, history, x_train_seq, x_test_seq, pred)
     keras::k_clear_session()
     gc()
+    tensorflow::tf$reset_default_graph()
   }
   
   colnames(results) <- names_col

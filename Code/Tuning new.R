@@ -428,7 +428,7 @@ tune_MRF_fast <- function(data.in,n){
 # =======================================================================================================================================
 # LSTM
 
-tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, lag = 2) {
+tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 3, seed = 1234, lag = 2) {
   print("Tuning LSTM")
   set.seed(seed)
   
@@ -438,7 +438,7 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, l
     units = c(10, 20, 40),
     dropout = 0.3,
     recurrent_dropout = 0.2,
-    epochs = 50,
+    epochs = 30,
     batch_size = 30
   )
   grid$RMSE <- NA_real_
@@ -527,6 +527,7 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 5, seed = 1234, l
       rm(model, history, preds, x_train_seq, x_valid_seq)
       keras::k_clear_session()
       gc()
+      tensorflow::tf$reset_default_graph()
     }
     
     grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
