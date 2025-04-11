@@ -420,8 +420,7 @@ run_regressions_new <- function(data_all,lhs_sel, x_pca, don_cb, smpl_in, smpl_o
     
     rm(model, history, x_train_seq, x_test_seq, pred)
     keras::k_clear_session()
-    gc()
-    tensorflow::tf$reset_default_graph()
+    gc(full = TRUE)
   }
   
   colnames(results) <- names_col
