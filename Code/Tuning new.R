@@ -526,8 +526,7 @@ tune_LSTM <- function(x, y, initial_window, horizon, n_folds = 3, seed = 1234, l
       
       rm(model, history, preds, x_train_seq, x_valid_seq)
       keras::k_clear_session()
-      gc()
-      tensorflow::tf$reset_default_graph()
+      gc(full = TRUE)
     }
     
     grid$RMSE[i] <- mean(cv_errors, na.rm = TRUE)
