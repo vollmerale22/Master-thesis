@@ -52,6 +52,7 @@ library(foreach)
 library(parallel)
 library(dfms)
 
+
 num_cores <- detectCores() - 2  # Reserve a couple of cores for the system
 cl <- makeCluster(num_cores)
 registerDoParallel(cl)
@@ -83,7 +84,7 @@ standardise <- function(series) {
 }
 
 # Load the Excel sheet
-data <- read_excel("Data/Data combined.xlsx")
+data <- read_excel("Data/Data combined EU Exports.xlsx")
 
 # Load functions
 source("Code/Clean.R")         
@@ -112,7 +113,7 @@ final_transformed_data <- transformed_data %>%
 
 # Save the transformed data to a new Excel file
 output_file <- final_transformed_data
-output_file <- "Data/transformed_data_test.xlsx"  
+output_file <- "Data/transformed_data_testEU.xlsx"  
 write_xlsx(final_transformed_data, output_file)
 
 # ----------------------------------------------------------------------------
@@ -132,7 +133,7 @@ list_methods <- c(1)                  # List of pre-selection methods
 # 3 = t-stat based (Bair et al., 2006)
 # 4 = Iterated Bayesian Model Averaging (BMA: Yeung et al., 2005)
 list_n <- c(60)                      # List of number of variables kept after pre-selection
-list_reg <- c(8)  # List of regressions techniques
+list_reg <- c(-2,-1,0,1,2,3,4,5,6,7,8)  # List of regressions techniques
 #-2 DFM on whole data
 #-1 = DFM on pre-selected variables
 # 0 = DFM double PCA
@@ -250,7 +251,7 @@ for (hh in 1:length(list_h)){
                  L2nd_target)
         
         # Cleaning
-        rm(var_sel)
+        #rm(var_sel)
         
         # --------------------------------------------------------------------
         # STEP B: Factor extraction (PCA) on pre-selected variables
@@ -515,5 +516,53 @@ print(xt,
       caption.placement = "top",
       sanitize.text.function = identity)
 
+# ----------------------------------------------------------------------------
+# STEP 6 - PERFORMANCE METRICS & DIRECTIONAL TESTS
+# ----------------------------------------------------------------------------
+
+library(rugarch)
+
+# Calculate MAE and MAPE for each forecasting model
+actual <- results[, 2]  
+forecast_names <- names(results)[-(1:2)]  # Exclude 'date' and 'true_value' columns
+
+mae <- sapply(forecast_names, function(model) {
+  mean(abs(results[[model]] - actual), na.rm = TRUE)
+})
+
+mape <- sapply(forecast_names, function(model) {
+  mean(abs((results[[model]] - actual) / actual), na.rm = TRUE) * 100
+})
+
+mae_mape_df <- data.frame(Model = forecast_names, MAE = mae, MAPE = mape)
+print("MAE and MAPE for each model:")
+print(mae_mape_df)
+
+da_test_results <- list()
+ep_test_results <- list()
+
+# Loop through each forecasting model to perform the tests
+for (model in forecast_names) {
+  forecast_vals <- results[[model]]
+  
+  # Directional Accuracy Test (Pesaran and Timmerman)
+  da_test_results[[model]] <- DACTest(forecast = forecast_vals, 
+                                      actual = actual, 
+                                      test = "PT", 
+                                      conf.level = 0.95)
+  
+  # Excess Profitability Test (Anatolyev and Gerko)
+  ep_test_results[[model]] <- DACTest(forecast = forecast_vals, 
+                                      actual = actual, 
+                                      test = "AG", 
+                                      conf.level = 0.95)
+}
+
+# Print the test results
+print("Directional Accuracy Test (Pesaran and Timmerman) Results:")
+print(da_test_results)
+
+print("Excess Profitability Test (Anatolyev and Gerko) Results:")
+print(ep_test_results)
 
 
