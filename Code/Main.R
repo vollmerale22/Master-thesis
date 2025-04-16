@@ -84,7 +84,7 @@ standardise <- function(series) {
 }
 
 # Load the Excel sheet
-data <- read_excel("Data/Data combined EU Exports.xlsx")
+data <- read_excel("Data/Data combined China Exports.xlsx")
 
 # Load functions
 source("Code/Clean.R")         
@@ -99,7 +99,10 @@ source("Code/Regression new.R")
 # ----------------------------------------------------------------------------
 # Adjust seasonality and standardise data 
 transformed_data <- data %>%
-  adjust_seasonality_large()  # Apply seasonal adjustment
+      adjust_seasonality_large()  # Apply seasonal adjustment only to these
+# Replace columns 2-11 with the values from data
+transformed_data[2:11] <- data[2:11]
+
 
 final_transformed_data <- transformed_data %>%
   mutate(across(where(is.numeric), ~ {
@@ -119,7 +122,7 @@ write_xlsx(final_transformed_data, output_file)
 # ----------------------------------------------------------------------------
 # STEP 0
 # ----------------------------------------------------------------------------
-target_variable <- "EU exports"
+target_variable <- "EU imports"
 name_input <- output_file  # Name of the input file
 min_start_date <- "2001-01-15"          # Minimum start date for variables (otherwise discarded)
 start_date_oos <- "2012-01-15"          # Start date for OOS predictions
@@ -343,10 +346,10 @@ for (hh in 1:length(list_h)){
       }
       
       # Create mean of predictions (excluding AR)
-      results %<>%
-        mutate(pred_mean = rowMeans(select(results,starts_with("pred_"))),
-               date = as_date(as.Date(as.POSIXct(date*24*60*60, origin="1970-01-01"))),
-               year = year(date))
+      #results %<>%
+       ## mutate(pred_mean = rowMeans(select(results,starts_with("pred_"))),
+         #      date = as_date(as.Date(as.POSIXct(date*24*60*60, origin="1970-01-01"))),
+          #     year = year(date))
       
       
       # Summarising and writing aggregate results
@@ -397,21 +400,38 @@ for (hh in 1:length(list_h)){
 } # End of loop on horizon
 stopCluster(cl)
 
+#Plot the first 12 rows  of data with date being on the x axis
+library(ggplot2)
+library(reshape2)
+library(ggplot2)
+
+
+results <- read.csv("./Final results/China/Exports/results_China_Exports.csv", row.names = 1)
+summary_all <- read.csv("./Final results/China/Exports/summaryall_China_Exports.csv" ,row.names = 1)
+resultsDFM <- read.csv("./Final results/China/Exports/LSTM_results_China_Exports.csv", row.names = 1)
+summary_allDFM <- read.csv("./Final results/China/Exports/LSTM_summaryall_China_Exports.csv", row.names = 1)
+
+#add results_LSTM_custom from resultsDFM to results by date
+results <- results %>%
+  left_join(resultsDFM %>% select(date, pred_lstm_custom), by = "date")
+#add summary_allDFM to summary_all by model
+summary_all <- bind_rows(summary_all, summary_allDFM["pred_lstm_custom",])
+
 # ----------------------------------------------------------------------------
-# STEP 4 - PERFORM TESTS
+# STEP 4 - PERFORM TEST
 # ----------------------------------------------------------------------------
-source("Code/Dm test.R")
+source("Code/DM test.R")
 benchmark_AR <- "ar"                  # AR benchmark column 
-benchmark_DFM <- "pred_dfm_after_pre"   # DFM benchmark column
+benchmark_DFM <- "pred_dfm_alldata"   # DFM benchmark column
 # --- Run the DM tests for both benchmarks using the 'results' object:
-dm_results_AR <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = FALSE, 
-                                 harvey_correction = FALSE, benchmark_column = benchmark_AR)
-dm_results_DFM <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = FALSE, 
-                                  harvey_correction = FALSE, benchmark_column = benchmark_DFM)
+dm_results_AR <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = TRUE, 
+                                 harvey_correction = TRUE, benchmark_column = benchmark_AR)
+dm_results_DFM <- perform_dm_test(results, h = 1, loss = function(e) e^2, one_sided = TRUE, 
+                                  harvey_correction = TRUE, benchmark_column = benchmark_DFM)
 
 # Save results to CSV
-write.csv(dm_results, file = paste0("./Output/",paste0("DM Tests"), "dm_test_results_", target_variable, ".csv"))
-
+write.csv(dm_results_AR, file = paste0("./Output/",paste0("DM Tests AR2"), "dm_test_results_", target_variable, ".csv"))
+write.csv(dm_results_DFM, file = paste0("./Output/",paste0("DM Tests DFM2"), "dm_test_results_", target_variable, ".csv"))
 
 
 # ----------------------------------------------------------------------------
@@ -419,19 +439,17 @@ write.csv(dm_results, file = paste0("./Output/",paste0("DM Tests"), "dm_test_res
 # ----------------------------------------------------------------------------
 
 display_names <- c("ar" = "AR",
-                   "pred_dfm_after_pre" = "DFM",
-                   "pred_ols" = "OLS",
+                   "pred_dfm_alldata" = "DFM",
                    "pred_qr" = "QR",
                    "pred_ms" = "MS",
                    "pred_rf" = "RF",
                    "pred_mrf" = "MRF",
                    "pred_xgbt" = "XGBoost (Tree)",
-                   "pred_xgbl" = "XGBoostL (Linear)",
                    "pred_lstm_custom" = "LSTM")
 
 #--- Define the desired order and grouping ---
-stat_models_keys <- c("ar", "pred_dfm_after_pre", "pred_ols", "pred_qr", "pred_ms")
-ml_models_keys <- c("pred_rf", "pred_mrf", "pred_xgbt", "pred_xgbl", "pred_lstm_custom")
+stat_models_keys <- c("ar", "pred_dfm_alldata", "pred_qr", "pred_ms")
+ml_models_keys <- c("pred_rf", "pred_mrf", "pred_xgbt", "pred_lstm_custom")
 ordered_keys <- c(stat_models_keys, ml_models_keys)
 
 #--- Build the final summary table ---
@@ -445,7 +463,7 @@ final_table <- data.frame(Model = character(),
 
 # For benchmarks, extract RMSE from summary_all
 rmse_AR_total <- summary_all["ar", "total"]
-rmse_DFM_total <- summary_all["pred_dfm_after_pre", "total"]
+rmse_DFM_total <- summary_all["pred_dfm_alldata", "total"]
 
 for (key in ordered_keys) {
   # Get display name for current model
@@ -460,21 +478,21 @@ for (key in ordered_keys) {
   if (key == "ar") {
     bench_AR <- "--"
     # For AR row, you might display the relative improvement versus DFM
-    bench_DFM <- paste0(round((rmse_DFM_total - rmse_AR_total) / rmse_DFM_total * 100, 1), "%")
-  } else if (key == "pred_dfm_after_pre") {
-    bench_AR <- paste0(round((rmse_AR_total - rmse_DFM_total) / rmse_AR_total * 100, 1), "%")
+    bench_DFM <- paste0(round(((rmse_AR_total - rmse_DFM_total) / rmse_DFM_total) * 100,3), "%")
+  } else if (key == "pred_dfm_alldata") {
+    bench_AR <- paste0(round(((rmse_DFM_total - rmse_AR_total) / rmse_AR_total) * 100, 3), "%")
     bench_DFM <- "--"
   } else {
     # Relative improvement vs. AR benchmark:
-    improvement_AR <- (rmse_AR_total - rmse_model_total) / rmse_AR_total * 100
+    improvement_AR <- (rmse_model_total - rmse_AR_total) / rmse_AR_total * 100
     p_val_AR <- dm_results_AR[[key]]$p_value
-    stars_AR <- ifelse(p_val_AR < 0.01, "**", ifelse(p_val_AR < 0.05, "*", ""))
+    stars_AR <- ifelse(p_val_AR < 0.05, "**", ifelse(p_val_AR < 0.1, "*", ""))
     bench_AR <- paste0(round(improvement_AR, 1), "%", stars_AR)
     
     # Relative improvement vs. DFM benchmark:
-    improvement_DFM <- (rmse_DFM_total - rmse_model_total) / rmse_DFM_total * 100
+    improvement_DFM <- (rmse_model_total - rmse_DFM_total) / rmse_DFM_total * 100
     p_val_DFM <- dm_results_DFM[[key]]$p_value
-    stars_DFM <- ifelse(p_val_DFM < 0.01, "**", ifelse(p_val_DFM < 0.05, "*", ""))
+    stars_DFM <- ifelse(p_val_DFM < 0.05, "**", ifelse(p_val_DFM < 0.1, "*", ""))
     bench_DFM <- paste0(round(improvement_DFM, 1), "%", stars_DFM)
   }
   
@@ -494,27 +512,28 @@ xt <- xtable(final_table,
              label = paste0("tab:", gsub(" ", "_", tolower(target_variable))))
 
 # --- Insert custom header rows for grouping ---
-addtorow <- list()
-addtorow$pos <- list()
-addtorow$text <- c()
+# Create a list with 'pos' and 'command' elements
+addtorow <- list(pos = list(), command = c())
 
-# Before first row, add a header for Statistical models
+# Before the first row, add a header for Statistical models
 addtorow$pos[[1]] <- -1
-addtorow$text[1] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{Statistical models}} \\\\\n\\hline\n"
+addtorow$command[1] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{Statistical models}} \\\\\n\\hline\n"
 
-# Find the position where ML models start (after stat_models_keys count)
+# Find the position where ML models start (after the last statistical model row)
 stat_count <- length(stat_models_keys)
-addtorow$pos[[2]] <- stat_count - 1  # insert after the last stat model row
-addtorow$text[2] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{ML Models}} \\\\\n\\hline\n"
+addtorow$pos[[2]] <- stat_count  # insert after the last statistical model row
+addtorow$command[2] <- "\\hline\n\\multicolumn{6}{l}{\\textbf{ML Models}} \\\\\n\\hline\n"
 
 # --- Print the table with xtable ---
 print(xt, 
+      digits = c(0, 0, 3, 3, 3, 0, 0),
       add.to.row = addtorow, 
       include.colnames = TRUE, 
       include.rownames = FALSE,
       floating = TRUE, 
       caption.placement = "top",
       sanitize.text.function = identity)
+
 
 # ----------------------------------------------------------------------------
 # STEP 6 - PERFORMANCE METRICS & DIRECTIONAL TESTS
