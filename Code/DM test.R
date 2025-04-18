@@ -1,8 +1,8 @@
 perform_dm_test <- function(results, 
                             h = 1, 
                             loss = function(e) e^2, 
-                            one_sided = FALSE, 
-                            harvey_correction = FALSE,
+                            one_sided = TRUE, 
+                            harvey_correction = TRUE,
                             benchmark_column) {
   # 1) Identify the actual (true) values
   actual <- results[["true_value"]]
