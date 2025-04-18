@@ -84,7 +84,7 @@ standardise <- function(series) {
 }
 
 # Load the Excel sheet
-data <- read_excel("Data/Data combined China Exports.xlsx")
+data <- read_excel("Data/Data combined.xlsx")
 
 # Load functions
 source("Code/Clean.R")         

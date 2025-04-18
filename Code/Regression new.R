@@ -331,6 +331,7 @@ run_regressions_new <- function(data_all,lhs_sel, x_pca, don_cb, smpl_in, smpl_o
                         alpha = as.numeric(param$alpha),
                         booster = "gblinear",
                         objective = "reg:squarederror",
+                        nthread = 1,
                         verbose = 0)
     results[1, count_col] <- predict(eq_boost,
                                      newdata = x_test_ml,

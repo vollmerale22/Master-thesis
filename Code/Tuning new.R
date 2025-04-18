@@ -124,7 +124,7 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   set.seed(seed)
   
   full_grid <- expand.grid(
-    nrounds = c(40,70,100),
+    nrounds = c(10,40,70,100),
     eta = c(0.1, 0.2, 0.3),
     alpha = c(0.001, 0.01, 0.1)
   )
@@ -137,36 +137,61 @@ tune_XGBL_new <- function(x, y, initial_window, horizon, n_folds = 5, seed = 123
   if(total_splits < n_folds) n_folds <- total_splits
   splits <- floor(seq(1, total_splits, length.out = n_folds))
   
+  # Create a reusable function to compute splits inside the foreach loop
+  # This avoids serializing large objects across nodes
+  compute_split <- function(fold_idx, n_total, initial_window, horizon, splits) {
+    if (fold_idx > length(splits)) return(NULL)
+    
+    train_end <- initial_window + splits[fold_idx] - 1
+    train_indices <- 1:train_end
+    valid_indices <- (train_end + 1):(train_end + horizon)
+    
+    if(max(valid_indices) > n_total) return(NULL)
+    
+    return(list(
+      train_indices = train_indices,
+      valid_indices = valid_indices
+    ))
+  }
+  
   res <- foreach(i = 1:nrow(sampled_grid), .combine = rbind, .packages = "xgboost") %dopar% {
-    cv_errors <- numeric(n_folds)
-    for (fold in seq_along(splits)) {
-      train_end <- initial_window + splits[fold] - 1
-      train_indices <- 1:train_end
-      valid_indices <- (train_end + 1):(train_end + horizon)
+    cv_errors <- numeric(length(splits))
+    
+    for (fold in 1:length(splits)) {
+      # Compute split indices inside the parallel loop
+      split_info <- compute_split(fold, n_total, initial_window, horizon, splits)
+      if(is.null(split_info)) next
       
-      if(max(valid_indices) > n_total) next
+      # Extract training and validation data for this fold
+      x_train <- x[split_info$train_indices, , drop = FALSE]
+      y_train <- y[split_info$train_indices]
+      x_valid <- x[split_info$valid_indices, , drop = FALSE]
+      y_valid <- y[split_info$valid_indices]
       
-      x_train <- x[train_indices, , drop = FALSE]
-      y_train <- y[train_indices]
-      x_valid <- x[valid_indices, , drop = FALSE]
-      y_valid <- y[valid_indices]
-      
+      # Create DMatrix on demand
       dtrain <- xgb.DMatrix(data = x_train, label = y_train)
+      
       set.seed(seed + splits[fold])
       model <- xgb.train(
+        params = list(
+          booster = "gblinear",
+          objective = "reg:squarederror",
+          eta = sampled_grid$eta[i],
+          alpha = sampled_grid$alpha[i],
+          feature_selector = "shuffle",  # Use 'shuffle' for faster feature selection
+          nthread = 1  # Explicitly set to 1 thread for better parallel control
+        ),
         data = dtrain,
         nrounds = sampled_grid$nrounds[i],
-        eta = sampled_grid$eta[i],
-        alpha = sampled_grid$alpha[i],
-        booster = "gblinear",
-        objective = "reg:squarederror",
         verbose = 0
       )
+      
       preds <- predict(model, newdata = x_valid)
       cv_errors[fold] <- sqrt(mean((preds - y_valid)^2))
     }
     data.frame(index = i, RMSE = mean(cv_errors, na.rm = TRUE))
   }
+  
   sampled_grid$RMSE <- res$RMSE
   best <- sampled_grid[which.min(sampled_grid$RMSE), ]
   message("Best XGBoost Linear parameters using parallel random search and rolling origin CV:")
